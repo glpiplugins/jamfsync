@@ -1,0 +1,68 @@
+{#
+ # JAMF Sync — create/edit instance form.
+ # Rendered via Instance::showForm() using GLPI's native item-form components:
+ # components/form/header.html.twig (opens the form + title bar + CSRF),
+ # the fields_macros, and components/form/buttons.html.twig (Add / Save / Delete + closes form).
+ #}
+{% import 'components/form/fields_macros.html.twig' as fields %}
+
+<div class="asset">
+    {{ include('components/form/header.html.twig') }}
+
+    {% set is_new = item.isNewItem() %}
+
+    <div class="card-body">
+        {{ fields.smallTitle(__('Connection', 'jamfsync'), 'ti ti-plug-connected') }}
+        <div class="row">
+            {{ fields.textField('name', item.fields['name'], __('Instance name', 'jamfsync'), {
+                'required': true,
+                'helper': __('A label to recognise this JAMF instance.', 'jamfsync'),
+            }) }}
+            {{ fields.urlField('jamf_base_url', item.fields['jamf_base_url'], __('JAMF base URL', 'jamfsync'), {
+                'required': true,
+                'additional_attributes': {'placeholder': 'https://tenant.jamfcloud.com'},
+            }) }}
+            {{ fields.textField('jamf_api_username', item.fields['jamf_api_username'], __('JAMF API username (Network ID)', 'jamfsync'), {
+                'required': true,
+                'additional_attributes': {'autocomplete': 'off'},
+            }) }}
+            {{ fields.passwordField('jamf_api_key', '', __('JAMF API key', 'jamfsync'), {
+                'required': is_new,
+                'clearable': false,
+                'helper': is_new ? '' : __('Leave blank to keep the existing key.', 'jamfsync'),
+                'additional_attributes': {
+                    'autocomplete': 'new-password',
+                    'placeholder': is_new ? '' : __('Leave blank to keep existing key', 'jamfsync'),
+                },
+            }) }}
+        </div>
+
+        {{ fields.smallTitle(__('Sync scope', 'jamfsync'), 'ti ti-refresh') }}
+        <div class="row">
+            {{ fields.dropdownField('Entity', 'entities_id', item.fields['entities_id'], __('Target entity', 'jamfsync')) }}
+            {{ fields.dropdownArrayField('name_source', item.fields['name_source'], {
+                'device_name': __('JAMF device name', 'jamfsync'),
+                'asset_tag': __('JAMF asset tag', 'jamfsync'),
+            }, __('Computer name source', 'jamfsync')) }}
+            {{ fields.dropdownYesNo('pull_devices', item.fields['pull_devices'], __('Pull devices', 'jamfsync')) }}
+            {{ fields.dropdownYesNo('pull_apps', item.fields['pull_apps'], __('Pull apps', 'jamfsync')) }}
+        </div>
+
+        {{ fields.smallTitle(__('Advanced', 'jamfsync'), 'ti ti-adjustments') }}
+        <div class="row">
+            {{ fields.dropdownYesNo('is_active', item.fields['is_active'], __('Active', 'jamfsync')) }}
+            {{ fields.dropdownYesNo('verify_tls', item.fields['verify_tls'], __('Verify TLS', 'jamfsync')) }}
+            {{ fields.numberField('request_timeout', item.fields['request_timeout'], __('Request timeout (sec)', 'jamfsync'), {
+                'min': 5,
+                'max': 120,
+            }) }}
+            {{ fields.numberField('page_size', item.fields['page_size'], __('Page size', 'jamfsync'), {
+                'min': 50,
+                'max': 1000,
+                'step': 50,
+            }) }}
+        </div>
+    </div>
+
+    {{ include('components/form/buttons.html.twig') }}
+</div>

@@ -1,0 +1,403 @@
+# JAMF Sync - English translations
+msgid ""
+msgstr ""
+"Project-Id-Version: JAMF Sync 0.4.0\n"
+"Language: fr_FR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+
+msgid "Active"
+msgstr "Actif"
+
+msgid "Add instance"
+msgstr "Ajouter une instance"
+
+msgid "After (JSON)"
+msgstr "Après (JSON)"
+
+msgid "All active instances"
+msgstr "Toutes les instances actives"
+
+msgid "App %s"
+msgstr "App %s"
+
+msgid "Apply"
+msgstr "Appliquer"
+
+msgid "Apps"
+msgstr "Applications"
+
+msgid "Apps synced (+%1$d/-%2$d)"
+msgstr "Applications synchronisées (+%1$d/-%2$d)"
+
+msgid "Back to configuration"
+msgstr "Retour à la configuration"
+
+msgid "Base URL"
+msgstr "URL de base"
+
+msgid "Before (JSON)"
+msgstr "Avant (JSON)"
+
+msgid "Cancel edit"
+msgstr "Annuler la modification"
+
+msgid "Changed"
+msgstr "Modifié"
+
+msgid "Changed items"
+msgstr "Éléments modifiés"
+
+msgid "Close details"
+msgstr "Fermer les détails"
+
+msgid "Computer"
+msgstr "Ordinateur"
+
+msgid "Computer created"
+msgstr "Ordinateur créé"
+
+msgid "Computer name source"
+msgstr "Source du nom de l'ordinateur"
+
+msgid "Computer updated"
+msgstr "Ordinateur mis à jour"
+
+msgid "Configured instances"
+msgstr "Instances configurées"
+
+msgid "Date"
+msgstr "Date"
+
+msgid "Default instance"
+msgstr "Instance par défaut"
+
+msgid "Delete this instance?"
+msgstr "Supprimer cette instance ?"
+
+msgid "Details"
+msgstr "Details"
+
+msgid "Device ID"
+msgstr "ID appareil"
+
+msgid "Devices"
+msgstr "Appareils"
+
+msgid "Duration"
+msgstr "Durée"
+
+msgid "Entity ID"
+msgstr "ID entité"
+
+msgid "Error"
+msgstr "Erreur"
+
+msgid "Export CSV"
+msgstr "Exporter CSV"
+
+msgid "Filter"
+msgstr "Filtre"
+
+msgid "Finished"
+msgstr "Terminé"
+
+msgid "From"
+msgstr "De"
+
+msgid "Full resync update"
+msgstr "Mise à jour de resynchronisation complète"
+
+msgid "Full run"
+msgstr "Exécution complète"
+
+msgid "Impacted devices"
+msgstr "Appareils impactés"
+
+msgid "Instance"
+msgstr "Instance"
+
+msgid "Instance name"
+msgstr "Nom de l'instance"
+
+msgid "Instance name is required."
+msgstr "Le nom de l'instance est requis."
+
+msgid "Instances"
+msgstr "Instances"
+
+msgid "Invalid JSON response from sync.ajax.php."
+msgstr "Réponse JSON invalide de sync.ajax.php."
+
+msgid "Invalid job ID."
+msgstr "ID de tâche invalide."
+
+msgid "JAMF API key"
+msgstr "Clé API JAMF"
+
+msgid "JAMF API username (Network ID)"
+msgstr "Nom d'utilisateur API JAMF (Network ID)"
+
+msgid "JAMF Sync"
+msgstr "JAMF Sync"
+
+msgid "JAMF Sync Monitoring"
+msgstr "Supervision JAMF Sync"
+
+msgid "JAMF Sync run change"
+msgstr "Changement d'exécution JAMF Sync"
+
+msgid "JAMF asset tag"
+msgstr "Tag d'actif JAMF"
+
+msgid "JAMF base URL"
+msgstr "JAMF base URL"
+
+msgid "JAMF base URL is required."
+msgstr "L'URL de base JAMF est requise."
+
+msgid "JAMF credentials are required."
+msgstr "Les identifiants JAMF sont requis."
+
+msgid "JAMF device name"
+msgstr "Nom d'appareil JAMF"
+
+msgid "JAMF instance deleted."
+msgstr "Instance JAMF supprimée."
+
+msgid "JAMF instance saved (#%d)."
+msgstr "Instance JAMF enregistrée (#%d)."
+
+msgid "JAMF instance table does not exist. Reinstall plugin."
+msgstr "La table des instances JAMF n'existe pas. Réinstallez le plugin."
+
+msgid "JAMF instances"
+msgstr "Instances JAMF"
+
+msgid "JAMF pull completed for %d instance(s)."
+msgstr "Récupération JAMF terminée pour %d instance(s)."
+
+msgid "JAMF pull completed."
+msgstr "Récupération JAMF terminée."
+
+msgid "JAMF pull completed. Devices: %d, apps: %d"
+msgstr "Récupération JAMF terminée. Appareils : %d, applications : %d"
+
+msgid "JAMF pull failed"
+msgstr "Échec de la récupération JAMF"
+
+msgid "JAMF pull finished with errors (%d failed instance(s))."
+msgstr "Récupération JAMF terminée avec erreurs (%d instance(s) en échec)."
+
+msgid "Job not found."
+msgstr "Tâche introuvable."
+
+msgid "Job queued"
+msgstr "Tâche en file d'attente"
+
+msgid "Last success"
+msgstr "Dernier succès"
+
+msgid "Leave blank to keep existing key"
+msgstr "Laisser vide pour conserver la clé existante"
+
+msgid "Message"
+msgstr "Message"
+
+msgid "Missing job ID."
+msgstr "ID de tâche manquant."
+
+msgid "Mode"
+msgstr "Mode"
+
+msgid "Monitoring"
+msgstr "Supervision"
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Name source"
+msgstr "Source du nom"
+
+msgid "No JAMF instances configured yet."
+msgstr "Aucune instance JAMF configurée."
+
+msgid "No active JAMF instance configured."
+msgstr "Aucune instance JAMF active configurée."
+
+msgid "No matching active JAMF instance configured."
+msgstr "Aucune instance JAMF active correspondante configurée."
+
+msgid "No sync runs found for current filter."
+msgstr "Aucune exécution trouvée pour ce filtre."
+
+msgid "OS"
+msgstr "OS"
+
+msgid "OS changed"
+msgstr "OS modifié"
+
+msgid "OS updated"
+msgstr "OS mis à jour"
+
+msgid "Object"
+msgstr "Objet"
+
+msgid "Page size"
+msgstr "Taille de page"
+
+msgid "Processed"
+msgstr "Traité"
+
+msgid "Processing instance: %s"
+msgstr "Traitement de l'instance : %s"
+
+msgid "Pull apps"
+msgstr "Récupérer les applications"
+
+msgid "Pull devices"
+msgstr "Récupérer les appareils"
+
+msgid "Pull devices and apps from JAMF"
+msgstr "Récupérer les appareils et applications depuis JAMF"
+
+msgid "Re-encrypted API keys: %d"
+msgstr "Clés API rechiffrées : %d"
+
+msgid "Recent sync runs"
+msgstr "Exécutions récentes"
+
+msgid "Request timeout (sec)"
+msgstr "Délai d'expiration (sec)"
+
+msgid "Rotate API key encryption"
+msgstr "Faire tourner le chiffrement des clés API"
+
+msgid "Run"
+msgstr "Exécuter"
+
+msgid "Run ID"
+msgstr "ID d'exécution"
+
+msgid "Run details"
+msgstr "Détails de l'exécution"
+
+msgid "Run full resync"
+msgstr "Lancer une resynchronisation complète"
+
+msgid "Run pull now"
+msgstr "Lancer la récupération"
+
+msgid "Runs"
+msgstr "Exécutions"
+
+msgid "Started"
+msgstr "Démarré"
+
+msgid "Success"
+msgstr "Succès"
+
+msgid "Sync completed."
+msgstr "Synchronisation terminée."
+
+msgid "Sync failed."
+msgstr "Échec de la synchronisation."
+
+msgid "Sync job appears stalled (no progress heartbeat)."
+msgstr "La tâche semble bloquée (pas de progression)."
+
+msgid "Sync runner"
+msgstr "Exécuteur de synchronisation"
+
+msgid "Sync stalled."
+msgstr "Synchronisation bloquée."
+
+msgid "Sync started"
+msgstr "Synchronisation démarrée"
+
+msgid "Target entity"
+msgstr "Entité cible"
+
+msgid "To"
+msgstr "À"
+
+msgid "Type"
+msgstr "Type"
+
+msgid "Unable to create sync job."
+msgstr "Impossible de créer la tâche de synchronisation."
+
+msgid "Unable to encrypt JAMF API key."
+msgstr "Impossible de chiffrer la clé API JAMF."
+
+msgid "Unable to load job status."
+msgstr "Impossible de charger le statut de la tâche."
+
+msgid "Unable to start job."
+msgstr "Impossible de démarrer la tâche."
+
+msgid "Unknown"
+msgstr "Inconnu"
+
+msgid "Unsupported action."
+msgstr "Action non prise en charge."
+
+msgid "Update instance"
+msgstr "Mettre à jour l'instance"
+
+msgid "Verify TLS"
+msgstr "Vérifier TLS"
+
+msgid "View"
+msgstr "Voir"
+
+
+msgid "Connection"
+msgstr "Connexion"
+
+msgid "Sync scope"
+msgstr "Portée de la synchronisation"
+
+msgid "Advanced"
+msgstr "Avancé"
+
+msgid "Never"
+msgstr "Jamais"
+
+msgid "Add JAMF instance"
+msgstr "Ajouter une instance JAMF"
+
+msgid "Edit instance"
+msgstr "Modifier l'instance"
+
+msgid "Back to instances"
+msgstr "Retour aux instances"
+
+msgid "JAMF Sync runner"
+msgstr "Exécuteur JAMF Sync"
+
+msgid "Configure and run JAMF Sync"
+msgstr "Configurer et exécuter JAMF Sync"
+
+msgid "A label to recognise this JAMF instance."
+msgstr "Un libellé pour reconnaître cette instance JAMF."
+
+msgid "Leave blank to keep the existing key."
+msgstr "Laisser vide pour conserver la clé existante."
+
+msgid "Add your first instance to start syncing devices and apps from JAMF."
+msgstr "Ajoutez votre première instance pour synchroniser les appareils et les applications depuis JAMF."
+
+msgid "Add an instance before running a sync."
+msgstr "Ajoutez une instance avant de lancer une synchronisation."
+
+msgid "Re-encrypt stored API keys with the current GLPI crypt key."
+msgstr "Rechiffrer les clés d'API stockées avec la clé de chiffrement GLPI actuelle."
+
+msgid "JAMF instance"
+msgid_plural "JAMF instances"
+msgstr[0] "Instance JAMF"
+msgstr[1] "Instances JAMF"

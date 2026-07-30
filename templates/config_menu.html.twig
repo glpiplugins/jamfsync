@@ -1,0 +1,19 @@
+{#
+ # JAMF Sync — vertical tab bar for the plugin back-office pages.
+ # Rendered via TemplateRenderer from GlpiPlugin\Jamfsync\Ui\ConfigMenu.
+ # Mirrors GLPI core's native item-type tabs (Ajax::createTabs, vertical orientation):
+ # a `nav nav-tabs flex-md-column` sitting inside a `card-tabs` container, next to a
+ # `tab-content ... card border-start-0` panel.
+ #}
+<ul class="nav nav-tabs flex-row flex-md-column" style="min-width: 200px" role="tablist">
+    {% for item in items %}
+        <li class="nav-item ms-0">
+            <a class="nav-link pe-1{{ item.active ? ' active' : '' }}"
+               href="{{ item.url }}"
+               {{ item.active ? 'aria-current="page"' : '' }}>
+                <i class="ti {{ item.icon }} me-2"></i>
+                <span>{{ item.label }}</span>
+            </a>
+        </li>
+    {% endfor %}
+</ul>

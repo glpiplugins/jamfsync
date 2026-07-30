@@ -1,0 +1,11 @@
+{
+  "name": "glpi/jamfsync",
+  "description": "Pull-only synchronization of devices and applications from JAMF School into GLPI.",
+  "type": "glpi-plugin",
+  "license": "GPL-3.0-or-later",
+  "autoload": {
+    "psr-4": {
+      "GlpiPlugin\\Jamfsync\\": "src/"
+    }
+  }
+}

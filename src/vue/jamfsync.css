@@ -1,0 +1,6 @@
+/* JAMF Sync runner — styling hooks. The runner reuses GLPI's Bootstrap/Tabler classes,
+   so this file is intentionally minimal and exists mainly to give the bundle a stable
+   stylesheet artifact (loaded via $PLUGIN_HOOKS['add_css']). */
+#jamfsync-runner-app .progress {
+    min-width: 8rem;
+}
