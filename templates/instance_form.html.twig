@@ -39,7 +39,9 @@
 
         {{ fields.smallTitle(__('Sync scope', 'jamfsync'), 'ti ti-refresh') }}
         <div class="row">
-            {{ fields.dropdownField('Entity', 'entities_id', item.fields['entities_id'], __('Target entity', 'jamfsync')) }}
+            {{ fields.dropdownField('Entity', 'entities_id', item.fields['entities_id'], __('Target entity', 'jamfsync'), {
+                'helper': __('Advisory only — GLPI assigns the entity for synced computers via its native inventory entity rules.', 'jamfsync'),
+            }) }}
             {{ fields.dropdownArrayField('name_source', item.fields['name_source'], {
                 'device_name': __('JAMF device name', 'jamfsync'),
                 'asset_tag': __('JAMF asset tag', 'jamfsync'),

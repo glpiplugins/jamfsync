@@ -20,7 +20,6 @@ const job = ref(null);
 let pollTimer = null;
 
 const activeInstances = computed(() => props.instances.filter((i) => Number(i.is_active) === 1));
-const progressPercent = computed(() => Number(job.value && job.value.progress_percent ? job.value.progress_percent : 0));
 const runDetailUrl = computed(() => {
     const runId = Number(job.value && job.value.last_run_id ? job.value.last_run_id : 0);
     return runId > 0 ? ('monitoring.php?run_id=' + runId) : 'monitoring.php';
@@ -161,29 +160,8 @@ defineExpose({ startSafe });
             </div>
         </div>
 
-        <div v-if="job" class="mt-3">
-            <div class="d-flex justify-content-between small text-muted mb-1">
-                <span>{{ job.message }}</span>
-                <span>{{ progressPercent }}%</span>
-            </div>
-            <div class="progress">
-                <div
-                    class="progress-bar progress-bar-striped"
-                    :class="{ 'progress-bar-animated': isRunning }"
-                    role="progressbar"
-                    :style="'width:' + progressPercent + '%'"
-                >
-{{ progressPercent }}%
-</div>
-            </div>
-            <div class="small text-muted mt-1">
-                {{ l.instances }}: {{ job.processed_instances }} / {{ job.total_instances }} |
-                {{ l.devices }}: {{ job.processed_devices }} / {{ job.total_devices }} |
-                {{ l.changed }}: {{ job.changed_count }} |
-                {{ l.apps }}: {{ job.apps_count }}
-            </div>
-        </div>
-
+        <!-- Live progress is shown by the shared status banner (StatusBanner.vue) on every
+             plugin page; only completion feedback is kept here to avoid a duplicate bar. -->
         <div v-if="errorMessage" class="alert alert-danger mt-3 mb-0">{{ errorMessage }}</div>
         <div v-if="successMessage" class="alert alert-success mt-3 mb-0">{{ successMessage }}</div>
     </div>

@@ -107,8 +107,15 @@ Monitoring:
 2. Pull devices with paging (`/api/devices`, optional `includeApps=true`)
 3. Build signatures per device/app
 4. Run delta decision (process only changed records)
-5. Upsert GLPI data (computer, OS, software/version, links)
-6. Reconcile JAMF-managed app links per device
+5. Map each changed device to a GLPI **native inventory** document
+   (`GlpiPlugin\Jamfsync\Service\InventoryPayloadBuilder`) and submit it via
+   `Glpi\Inventory\Inventory` — GLPI creates/updates the Computer, OS, software
+   and storage with native **history**, locks and de-duplication. The target
+   entity is assigned by GLPI's own inventory entity rules (the instance's
+   "target entity" is advisory only). Battery is not synced (JAMF reports a
+   charge percentage, which has no lossless inventory mapping).
+6. Diff a before/after computer snapshot to record device/OS/app changes for the
+   monitoring UI
 7. Log to `glpi_plugin_jamfsync_syncruns` and update per-instance checkpoint
 
 ## Data Model (Plugin)
@@ -116,9 +123,11 @@ Monitoring:
 - `glpi_plugin_jamfsync_instances`
 - `glpi_plugin_jamfsync_syncruns`
 - `glpi_plugin_jamfsync_devicemaps`
-- `glpi_plugin_jamfsync_applinks`
 - `glpi_plugin_jamfsync_runchanges`
 - `glpi_plugin_jamfsync_syncjobs` (async job status/progress)
+
+(`glpi_plugin_jamfsync_applinks` was dropped in 0.5.0 — software links are now
+managed natively by the GLPI inventory import.)
 
 ## Project Structure
 
@@ -129,7 +138,8 @@ Monitoring:
 - `front/monitoring.php`: monitoring, CSV export, run details
 - `src/Api/JamfClient.php`: JAMF API client + paging logic
 - `src/InstanceRepository.php`: instance management + checkpoint update
-- `src/Service/SyncService.php`: delta logic, mapping, upsert, logging
+- `src/Service/SyncService.php`: delta logic, native inventory submission, monitoring logging
+- `src/Service/InventoryPayloadBuilder.php`: maps a JAMF device to a GLPI inventory JSON document
 - `src/PluginJamfsyncSyncTask.php`: cron entrypoint
 - `src/Access.php`: dedicated profile right (`plugin_jamfsync_config`) + seeding
 - `src/ProfileTab.php`: rights matrix tab on the Profile form

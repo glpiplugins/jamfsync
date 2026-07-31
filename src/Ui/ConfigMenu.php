@@ -47,6 +47,21 @@ final class ConfigMenu
         }
 
         echo "<div class='container-fluid px-0'>";
+
+        // Persistent "sync running" indicator (Vue, mounted by the plugin bundle). Present on
+        // every back-office page so a running sync's progress is visible and survives reloads.
+        $bannerLabels = [
+            'sync_running' => __('Sync running', 'jamfsync'),
+            'instances'    => __('Instances', 'jamfsync'),
+            'devices'      => __('Devices', 'jamfsync'),
+            'changed'      => __('Changed', 'jamfsync'),
+            'apps'         => __('Apps', 'jamfsync'),
+            'monitoring'   => __('Monitoring', 'jamfsync'),
+        ];
+        echo "<div id='jamfsync-status-banner' data-labels='"
+            . htmlescape(json_encode($bannerLabels, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
+            . "'></div>";
+
         echo "<div class='d-flex card-tabs flex-column flex-md-row vertical'>";
 
         TemplateRenderer::getInstance()->display('@jamfsync/config_menu.html.twig', [

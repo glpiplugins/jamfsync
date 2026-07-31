@@ -47,7 +47,7 @@ class SyncService
         $totalInstances = count($instances);
 
         if ($jobId > 0) {
-            $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
+            $now = date('Y-m-d H:i:s'); // real wall-clock for job timing (async run freezes glpi_currenttime)
             $this->updateSyncJob($jobId, [
                 'status' => 'running',
                 'mode' => $mode,
@@ -68,7 +68,7 @@ class SyncService
         }
 
         foreach ($instances as $instanceIndex => $instance) {
-            $startedAt = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
+            $startedAt = date('Y-m-d H:i:s'); // real wall-clock so the logged run shows a real duration
             $devicesCount = 0;
             $appsCount = 0;
             $processedCount = 0;
@@ -105,8 +105,6 @@ class SyncService
 
                 $processedCount = count($devices);
                 $globalDiscoveredDevices += $processedCount;
-                $appAggregate = [];
-                $osAggregate = [];
 
                 foreach ($devices as $device) {
                     if (!is_array($device)) {
@@ -123,103 +121,63 @@ class SyncService
 
                     $deviceSignature = $this->buildDeviceSignature($instance, $device, $identifiers);
                     $appsSignature = $includeApps
-                        ? $this->buildAppsSignature($this->extractApps($device))
+                        ? $this->buildAppsSignature(InventoryPayloadBuilder::extractApps($device))
                         : (string) ($map['apps_signature'] ?? '');
 
                     $deviceChanged = $isFull || !$map || (string) ($map['device_signature'] ?? '') !== $deviceSignature;
                     $appsChanged = $includeApps && ($isFull || !$map || (string) ($map['apps_signature'] ?? '') !== $appsSignature);
 
                     $computerId = (int) ($map['computers_id'] ?? 0);
-                    if (!$pullDevices && $computerId <= 0) {
-                        // pull_devices disabled: never create computers from device data, but
-                        // resolve an existing one read-only so enabled app-sync can still attach.
-                        $computerId = $this->findComputerForDevice(
+                    $needsSubmit = $pullDevices && ($deviceChanged || $appsChanged || $computerId <= 0);
+
+                    // pull_devices disabled, or unchanged since last run: only refresh the map.
+                    // (With native inventory, software cannot be attached without submitting the
+                    // computer, so pull_devices=0 means nothing is written for this device.)
+                    if (!$needsSubmit) {
+                        $this->upsertDeviceMap(
                             (int) ($instance['id'] ?? 0),
-                            $identifiers['device_id'],
-                            $identifiers['udid'],
-                            $identifiers['serial'],
-                            $identifiers['uuid'],
-                            (int) ($instance['entities_id'] ?? 0)
+                            $identifiers,
+                            $computerId,
+                            (int) ($instance['entities_id'] ?? 0),
+                            $deviceSignature,
+                            $appsSignature,
+                            InventoryPayloadBuilder::extractLastCheckinAt($device),
+                            $startedAt
                         );
-                    }
-                    $changeParts = [];
-                    $appsSync = [
-                        'total' => 0,
-                        'added' => 0,
-                        'removed' => 0,
-                        'changes' => [],
-                    ];
-                    $deviceBefore = [];
-                    $deviceAfter = [];
-
-                    if ($pullDevices && ($deviceChanged || $appsChanged || $computerId <= 0)) {
-                        $wasNewComputer = $computerId <= 0;
-                        $upsertResult = $this->upsertComputerFromDevice($instance, $device, $identifiers, $computerId);
-                        $computerId = (int) ($upsertResult['computer_id'] ?? 0);
-                        $deviceBefore = (array) ($upsertResult['before'] ?? []);
-                        $deviceAfter = (array) ($upsertResult['after'] ?? []);
-                        $changedCount++;
-
-                        if ($isFull && !$wasNewComputer) {
-                            $changeParts[] = __('Full resync update', 'jamfsync');
-                        } elseif ($wasNewComputer) {
-                            $changeParts[] = __('Computer created', 'jamfsync');
-                        } else {
-                            $changeParts[] = __('Computer updated', 'jamfsync');
-                        }
-
-                        if ((bool) ($upsertResult['os_changed'] ?? false)) {
-                            $osBefore = (array) ($upsertResult['os_before'] ?? []);
-                            $osAfter = (array) ($upsertResult['os_after'] ?? []);
-                            $changeParts[] = __('OS updated', 'jamfsync');
-                            $osKey = strtolower(json_encode($osBefore)) . '::' . strtolower(json_encode($osAfter));
-                            if (!isset($osAggregate[$osKey])) {
-                                $osAggregate[$osKey] = [
-                                    'name' => trim((string) ($osAfter['name'] ?? '')) !== ''
-                                        ? trim((string) ($osAfter['name'] ?? '') . ' ' . (string) ($osAfter['version'] ?? ''))
-                                        : __('Unknown', 'jamfsync'),
-                                    'before' => $osBefore,
-                                    'after' => $osAfter,
-                                    'devices' => [],
-                                ];
-                            }
-                            $osAggregate[$osKey]['devices'][] = [
-                                'jamf_device_id' => (string) ($identifiers['device_id'] ?? ''),
-                                'computers_id' => $computerId,
-                                'computer_name' => $this->resolveComputerNameFromDevice($instance, $device),
-                            ];
-                        }
+                        $globalProcessedDevices++;
+                        continue;
                     }
 
-                    if ($includeApps && $appsChanged && $computerId > 0) {
-                        $appsSync = $this->syncAppsForDevice($instance, $identifiers, $computerId, $device);
-                        $appsCount += (int) ($appsSync['total'] ?? 0);
-                        $changeParts[] = sprintf(
-                            __('Apps synced (+%1$d/-%2$d)', 'jamfsync'),
-                            (int) ($appsSync['added'] ?? 0),
-                            (int) ($appsSync['removed'] ?? 0)
-                        );
+                    $wasNew = $computerId <= 0;
+                    $before = $computerId > 0 ? $this->buildComputerSnapshot($computerId) : [];
 
-                        foreach ((array) ($appsSync['changes'] ?? []) as $appChange) {
-                            $appName = trim((string) ($appChange['app_name'] ?? ''));
-                            $appVersion = trim((string) ($appChange['version'] ?? ''));
-                            $action = trim((string) ($appChange['action'] ?? 'updated'));
-                            $appKey = strtolower($action . '|' . $appName . '|' . $appVersion);
+                    // Native GLPI inventory submission: creates/updates the Computer + OS +
+                    // software + storage with native history, locks and de-duplication. The
+                    // target entity is left to GLPI's own inventory entity rules / default.
+                    $payload = InventoryPayloadBuilder::build($device, $instance, $identifiers, $includeApps);
+                    // GLPI's inventory expects a decoded object (stdClass), not a JSON string.
+                    $inventory = new \Glpi\Inventory\Inventory($payload);
+                    if ($inventory->inError()) {
+                        throw new RuntimeException(sprintf(
+                            __('Inventory import failed: %s', 'jamfsync'),
+                            implode('; ', array_map('strval', (array) $inventory->getErrors()))
+                        ));
+                    }
 
-                            if (!isset($appAggregate[$appKey])) {
-                                $appAggregate[$appKey] = [
-                                    'name' => trim($appName . ($appVersion !== '' ? (' ' . $appVersion) : '')),
-                                    'action' => $action,
-                                    'devices' => [],
-                                ];
-                            }
+                    $computerId = $this->resolveComputerAfterInventory(
+                        (string) $payload->deviceid,
+                        $identifiers['serial'],
+                        $identifiers['uuid']
+                    );
+                    $changedCount++;
+                    if ($includeApps) {
+                        $appsCount += count(InventoryPayloadBuilder::extractApps($device));
+                    }
 
-                            $appAggregate[$appKey]['devices'][] = [
-                                'jamf_device_id' => (string) ($identifiers['device_id'] ?? ''),
-                                'computers_id' => $computerId,
-                                'computer_name' => $this->resolveComputerNameFromDevice($instance, $device),
-                            ];
-                        }
+                    $after = $computerId > 0 ? $this->buildComputerSnapshot($computerId) : [];
+                    $displayName = InventoryPayloadBuilder::resolveComputerNameFromDevice($instance, $device);
+                    foreach ($this->diffSnapshots($wasNew, $before, $after, $identifiers, $computerId, $displayName) as $entry) {
+                        $changeEntries[] = $entry;
                     }
 
                     $this->upsertDeviceMap(
@@ -229,29 +187,9 @@ class SyncService
                         (int) ($instance['entities_id'] ?? 0),
                         $deviceSignature,
                         $appsSignature,
-                        $this->extractLastCheckinAt($device),
+                        InventoryPayloadBuilder::extractLastCheckinAt($device),
                         $startedAt
                     );
-
-                    if ($changeParts !== []) {
-                        $displayName = $this->resolveComputerNameFromDevice($instance, $device);
-                        if ($computerId > 0 && $deviceBefore === [] && $deviceAfter === []) {
-                            $snapshot = $this->buildComputerSnapshot($computerId);
-                            $deviceBefore = $snapshot;
-                            $deviceAfter = $snapshot;
-                        }
-                        $changeEntries[] = [
-                            'change_type' => 'device',
-                            'jamf_device_id' => (string) ($identifiers['device_id'] ?? ''),
-                            'computers_id' => $computerId,
-                            'computer_name' => $displayName,
-                            'object_name' => $displayName,
-                            'details' => implode(' | ', $changeParts),
-                            'before_json' => $this->encodeJsonForLog($deviceBefore),
-                            'after_json' => $this->encodeJsonForLog($deviceAfter),
-                            'impacted_devices' => null,
-                        ];
-                    }
 
                     $globalProcessedDevices++;
                     if ($jobId > 0 && ($globalProcessedDevices % 10 === 0 || $globalProcessedDevices === $globalDiscoveredDevices)) {
@@ -265,39 +203,14 @@ class SyncService
                     }
                 }
 
-                foreach ($appAggregate as $entry) {
-                    $changeEntries[] = [
-                        'change_type' => 'app',
-                        'jamf_device_id' => '',
-                        'computers_id' => 0,
-                        'computer_name' => '',
-                        'object_name' => (string) ($entry['name'] ?? ''),
-                        'details' => sprintf(__('App %s', 'jamfsync'), (string) ($entry['action'] ?? 'updated')),
-                        'before_json' => null,
-                        'after_json' => null,
-                        'impacted_devices' => $this->encodeJsonForLog((array) ($entry['devices'] ?? [])),
-                    ];
-                }
-
-                foreach ($osAggregate as $entry) {
-                    $changeEntries[] = [
-                        'change_type' => 'os',
-                        'jamf_device_id' => '',
-                        'computers_id' => 0,
-                        'computer_name' => '',
-                        'object_name' => (string) ($entry['name'] ?? ''),
-                        'details' => __('OS changed', 'jamfsync'),
-                        'before_json' => $this->encodeJsonForLog((array) ($entry['before'] ?? [])),
-                        'after_json' => $this->encodeJsonForLog((array) ($entry['after'] ?? [])),
-                        'impacted_devices' => $this->encodeJsonForLog((array) ($entry['devices'] ?? [])),
-                    ];
-                }
-
-                if ((int) ($instance['pull_devices'] ?? 0) === 1) {
+                if ($pullDevices) {
                     $devicesCount = $processedCount;
                 }
 
-            } catch (RuntimeException $exception) {
+            } catch (\Throwable $exception) {
+                // Broad catch: a single inventory/import failure must still be logged as a
+                // sync run (visible in Monitoring) and mark the job as errored, instead of
+                // killing the async worker silently (which would leave the job "stalled").
                 $status = 'error';
                 $message = $exception->getMessage();
                 $failed++;
@@ -312,7 +225,7 @@ class SyncService
                 }
             }
 
-            $finishedAt = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
+            $finishedAt = date('Y-m-d H:i:s'); // real wall-clock so the logged run shows a real duration
             if ($status === 'success') {
                 $repository->updateCheckpoint((int) ($instance['id'] ?? 0), $finishedAt, $cursorEnd);
             }
@@ -360,7 +273,7 @@ class SyncService
             : sprintf(__('JAMF pull completed for %d instance(s).', 'jamfsync'), count($instances));
 
         if ($jobId > 0) {
-            $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
+            $now = date('Y-m-d H:i:s'); // real wall-clock for job timing (async run freezes glpi_currenttime)
             $this->updateSyncJob($jobId, [
                 'status' => $status,
                 'error_code' => $status === 'success' ? '' : 'sync_failed',
@@ -382,600 +295,6 @@ class SyncService
             'devices_count' => $totalDevices,
             'apps_count' => $totalApps,
         ];
-    }
-
-    private function syncAppsForDevice(array $instance, array $identifiers, int $computerId, array $device): array
-    {
-        global $DB;
-
-        $instanceId = (int) ($instance['id'] ?? 0);
-        $deviceId = (string) ($identifiers['device_id'] ?? '');
-        $entitiesId = (int) ($instance['entities_id'] ?? 0);
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-
-        $desiredVersionIds = [];
-        $desiredMeta = [];
-        $count = 0;
-        $addedCount = 0;
-        $removedCount = 0;
-        $changeDetails = [];
-
-        foreach ($this->extractApps($device) as $app) {
-            $softwareName = trim((string) ($app['name'] ?? ''));
-            if ($softwareName === '') {
-                continue;
-            }
-
-            $versionName = trim((string) ($app['version'] ?? ''));
-            if ($versionName === '') {
-                $versionName = 'unknown';
-            }
-
-            $softwareId = $this->upsertSoftware($entitiesId, $softwareName);
-            $softwareVersionId = $this->upsertSoftwareVersion($entitiesId, $softwareId, $versionName);
-            $desiredVersionIds[$softwareVersionId] = true;
-            $desiredMeta[$softwareVersionId] = [
-                'app_name' => $softwareName,
-                'version' => $versionName,
-            ];
-            $count++;
-        }
-
-        $existingLinks = $DB->request([
-            'FROM' => 'glpi_plugin_jamfsync_applinks',
-            'WHERE' => [
-                'jamf_instances_id' => $instanceId,
-                'jamf_device_id' => $deviceId,
-            ],
-        ]);
-
-        $existingVersionIds = [];
-        foreach ($existingLinks as $row) {
-            $existingVersionIds[(int) $row['softwareversions_id']] = (int) $row['id'];
-        }
-
-        foreach ($desiredVersionIds as $softwareVersionId => $_) {
-            $this->linkSoftwareToComputer($entitiesId, $computerId, (int) $softwareVersionId);
-
-            if (isset($existingVersionIds[(int) $softwareVersionId])) {
-                $DB->update('glpi_plugin_jamfsync_applinks', [
-                    'computers_id' => $computerId,
-                    'date_mod' => $now,
-                ], ['id' => $existingVersionIds[(int) $softwareVersionId]]);
-                continue;
-            }
-
-            $DB->insert('glpi_plugin_jamfsync_applinks', [
-                'jamf_instances_id' => $instanceId,
-                'jamf_device_id' => $deviceId,
-                'computers_id' => $computerId,
-                'softwareversions_id' => (int) $softwareVersionId,
-                'date_creation' => $now,
-                'date_mod' => $now,
-            ]);
-            $addedCount++;
-            $changeDetails[] = [
-                'action' => 'added',
-                'app_name' => (string) ($desiredMeta[(int) $softwareVersionId]['app_name'] ?? ''),
-                'version' => (string) ($desiredMeta[(int) $softwareVersionId]['version'] ?? ''),
-            ];
-        }
-
-        foreach ($existingVersionIds as $softwareVersionId => $linkId) {
-            if (isset($desiredVersionIds[(int) $softwareVersionId])) {
-                continue;
-            }
-
-            $DB->delete('glpi_items_softwareversions', [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'softwareversions_id' => (int) $softwareVersionId,
-                'is_dynamic' => 1,
-            ]);
-            $DB->delete('glpi_plugin_jamfsync_applinks', [
-                'id' => $linkId,
-            ]);
-            $removedCount++;
-            $removedMeta = $this->getSoftwareVersionMeta((int) $softwareVersionId);
-            $changeDetails[] = [
-                'action' => 'removed',
-                'app_name' => (string) ($removedMeta['app_name'] ?? ''),
-                'version' => (string) ($removedMeta['version'] ?? ''),
-            ];
-        }
-
-        return [
-            'total' => $count,
-            'added' => $addedCount,
-            'removed' => $removedCount,
-            'changes' => $changeDetails,
-        ];
-    }
-
-    private function upsertComputerFromDevice(array $instance, array $device, array $identifiers, int $existingComputerId = 0): array
-    {
-        global $DB;
-
-        $serial = $identifiers['serial'];
-        $udid = $identifiers['udid'];
-        $uuid = $identifiers['uuid'];
-        $name = $this->resolveComputerNameFromDevice($instance, $device);
-
-        $manufacturer = $this->extractNestedScalar($device, [
-            'manufacturer',
-            'vendor',
-            'hardware.manufacturer',
-            'hardware.vendor',
-            'deviceManufacturer',
-            'brand',
-            'general.manufacturer',
-        ]);
-        $model = $this->extractNestedScalar($device, [
-            'model',
-            'model.name',
-            'model.identifier',
-            'model.model',
-            'modelName',
-            'hardware.model',
-            'hardware.modelName',
-            'model_identifier',
-            'modelIdentifier',
-            'productName',
-            'deviceModel',
-            'deviceModelName',
-            'general.model',
-        ]);
-        $platform = strtolower($this->extractNestedScalar($device, [
-            'os.prefix',
-            'osName',
-            'os.name',
-            'operatingSystemName',
-            'operatingSystem',
-            'platform',
-        ]));
-
-        if ($manufacturer === '' && preg_match('/\\b(ios|ipados|macos|os x|tvos|watchos)\\b/i', $platform) === 1) {
-            $manufacturer = 'Apple';
-        }
-        // Never store OS names as hardware model.
-        if (preg_match('/^(ios|ipados|macos|os\\s*x|android|windows)$/i', trim($model)) === 1) {
-            $model = '';
-        }
-        if ($model === '') {
-            // Fallback only to device-model-like fields, never OS/platform fields.
-            $model = $this->extractNestedScalar($device, [
-                'deviceType',
-                'hardware.deviceType',
-                'deviceModelType',
-                'general.deviceType',
-            ]);
-            if (preg_match('/^(ios|ipados|macos|os\\s*x|android|windows)$/i', trim($model)) === 1) {
-                $model = '';
-            }
-        }
-        $locationName = $this->extractNestedScalar($device, ['location', 'location.name', 'site', 'site.name', 'school', 'school.name']);
-        $lastActiveAt = $this->extractLastActiveAt($device);
-
-        $entitiesId = (int) ($instance['entities_id'] ?? 0);
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-
-        $computerId = $existingComputerId;
-        if ($computerId > 0 && !$this->computerMatchesIdentifiers($computerId, $entitiesId, $serial, $udid, $uuid)) {
-            $computerId = 0;
-        }
-        if ($computerId <= 0) {
-            $computerId = $this->findComputerForDevice((int) ($instance['id'] ?? 0), $identifiers['device_id'], $udid, $serial, $uuid, $entitiesId);
-        }
-        $beforeSnapshot = $computerId > 0 ? $this->buildComputerSnapshot($computerId) : [];
-
-        $payload = [
-            'entities_id' => $entitiesId,
-            'name' => $name,
-            'serial' => $serial,
-            'otherserial' => $udid,
-            'uuid' => $uuid,
-            'manufacturers_id' => $this->findOrCreateManufacturer($manufacturer),
-            'computermodels_id' => $this->findOrCreateComputerModel($model),
-            'locations_id' => $this->findOrCreateLocation($entitiesId, $locationName),
-            'users_id' => $this->findUserForDevice($entitiesId, $device),
-            'contact' => $this->extractNestedScalar($device, ['ownerName', 'owner.name', 'user.name']),
-            'comment' => $this->buildDeviceComment($device),
-            'is_dynamic' => 1,
-            'is_deleted' => 0,
-            'is_template' => 0,
-            'last_inventory_update' => $now,
-            'last_boot' => $lastActiveAt !== '' ? $lastActiveAt : null,
-            'date_mod' => $now,
-        ];
-        $osResult = [
-            'changed' => false,
-            'before' => [],
-            'after' => [],
-        ];
-        $isNew = false;
-
-        if ($computerId > 0) {
-            $DB->update('glpi_computers', $payload, ['id' => $computerId]);
-            $osResult = $this->syncOperatingSystemForComputer($entitiesId, $computerId, $device);
-            $this->syncStorageForComputer($entitiesId, $computerId, $device);
-            $this->syncBatteryForComputer($entitiesId, $computerId, $device);
-            $this->syncNetworkForComputer($entitiesId, $computerId, $device);
-            return [
-                'computer_id' => $computerId,
-                'before' => $beforeSnapshot,
-                'after' => $this->buildComputerSnapshot($computerId),
-                'os_changed' => (bool) ($osResult['changed'] ?? false),
-                'os_before' => (array) ($osResult['before'] ?? []),
-                'os_after' => (array) ($osResult['after'] ?? []),
-                'is_new' => false,
-            ];
-        }
-
-        $payload['date_creation'] = $now;
-        $DB->insert('glpi_computers', $payload);
-        $computerId = (int) $DB->insertId();
-        if ($computerId > 0) {
-            $isNew = true;
-            $osResult = $this->syncOperatingSystemForComputer($entitiesId, $computerId, $device);
-            $this->syncStorageForComputer($entitiesId, $computerId, $device);
-            $this->syncBatteryForComputer($entitiesId, $computerId, $device);
-            $this->syncNetworkForComputer($entitiesId, $computerId, $device);
-        }
-        return [
-            'computer_id' => $computerId,
-            'before' => $beforeSnapshot,
-            'after' => $computerId > 0 ? $this->buildComputerSnapshot($computerId) : [],
-            'os_changed' => (bool) ($osResult['changed'] ?? false),
-            'os_before' => (array) ($osResult['before'] ?? []),
-            'os_after' => (array) ($osResult['after'] ?? []),
-            'is_new' => $isNew,
-        ];
-    }
-
-    private function computerMatchesIdentifiers(int $computerId, int $entitiesId, string $serial, string $udid, string $uuid): bool
-    {
-        global $DB;
-
-        if ($computerId <= 0) {
-            return false;
-        }
-
-        $computer = $DB->request([
-            'FROM' => 'glpi_computers',
-            'WHERE' => [
-                'id' => $computerId,
-                'entities_id' => $entitiesId,
-                'is_deleted' => 0,
-                'is_template' => 0,
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        if (!$computer) {
-            return false;
-        }
-
-        $currentSerial = trim((string) ($computer['serial'] ?? ''));
-        $currentUdid = trim((string) ($computer['otherserial'] ?? ''));
-        $currentUuid = trim((string) ($computer['uuid'] ?? ''));
-
-        if ($serial !== '' && $currentSerial !== '' && strcasecmp($serial, $currentSerial) !== 0) {
-            return false;
-        }
-        if ($udid !== '' && $currentUdid !== '' && strcasecmp($udid, $currentUdid) !== 0) {
-            return false;
-        }
-        if ($uuid !== '' && $currentUuid !== '' && strcasecmp($uuid, $currentUuid) !== 0) {
-            return false;
-        }
-
-        return true;
-    }
-
-    private function upsertSoftware(int $entitiesId, string $name): int
-    {
-        global $DB;
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_softwares',
-            'WHERE' => [
-                'entities_id' => $entitiesId,
-                'name' => $name,
-                'is_deleted' => 0,
-                'is_template' => 0,
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-
-        if ($existing) {
-            $softwareId = (int) $existing['id'];
-            $DB->update('glpi_softwares', ['date_mod' => $now], ['id' => $softwareId]);
-            return $softwareId;
-        }
-
-        $DB->insert('glpi_softwares', [
-            'entities_id' => $entitiesId,
-            'is_recursive' => 0,
-            'name' => $name,
-            'is_deleted' => 0,
-            'is_template' => 0,
-            'is_valid' => 1,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function resolveComputerNameFromDevice(array $instance, array $device): string
-    {
-        $nameSource = trim(strtolower((string) ($instance['name_source'] ?? 'device_name')));
-        $deviceName = $this->extractScalar($device, ['name', 'deviceName', 'device_name']);
-        $assetTag = $this->extractNestedScalar($device, ['assetTag', 'asset_tag']);
-        $serial = $this->extractScalar($device, ['serialNumber', 'serialnumber', 'serial']);
-        $udid = $this->extractScalar($device, ['udid', 'UDID']);
-
-        if ($nameSource === 'asset_tag') {
-            if ($assetTag !== '') {
-                return $assetTag;
-            }
-            if ($deviceName !== '') {
-                return $deviceName;
-            }
-            return $serial !== '' ? $serial : ($udid !== '' ? $udid : 'JAMF Device');
-        }
-
-        if ($deviceName !== '') {
-            return $deviceName;
-        }
-        if ($assetTag !== '') {
-            return $assetTag;
-        }
-        return $serial !== '' ? $serial : ($udid !== '' ? $udid : 'JAMF Device');
-    }
-
-    private function upsertSoftwareVersion(int $entitiesId, int $softwareId, string $version): int
-    {
-        global $DB;
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_softwareversions',
-            'WHERE' => [
-                'entities_id' => $entitiesId,
-                'softwares_id' => $softwareId,
-                'name' => $version,
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-
-        if ($existing) {
-            $versionId = (int) $existing['id'];
-            $DB->update('glpi_softwareversions', ['date_mod' => $now], ['id' => $versionId]);
-            return $versionId;
-        }
-
-        $DB->insert('glpi_softwareversions', [
-            'entities_id' => $entitiesId,
-            'is_recursive' => 0,
-            'softwares_id' => $softwareId,
-            'name' => $version,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function linkSoftwareToComputer(int $entitiesId, int $computerId, int $softwareVersionId): void
-    {
-        global $DB;
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_items_softwareversions',
-            'WHERE' => [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'softwareversions_id' => $softwareVersionId,
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return;
-        }
-
-        $DB->insert('glpi_items_softwareversions', [
-            'items_id' => $computerId,
-            'itemtype' => 'Computer',
-            'softwareversions_id' => $softwareVersionId,
-            'entities_id' => $entitiesId,
-            'is_deleted' => 0,
-            'is_dynamic' => 1,
-            'is_deleted_item' => 0,
-            'is_template_item' => 0,
-        ]);
-    }
-
-    private function findOrCreateManufacturer(string $name): int
-    {
-        global $DB;
-
-        $name = trim($name);
-        if ($name === '') {
-            return 0;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_manufacturers',
-            'WHERE' => ['name' => $name],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return (int) ($existing['id'] ?? 0);
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_manufacturers', [
-            'name' => $name,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function findOrCreateComputerModel(string $name): int
-    {
-        global $DB;
-
-        $name = trim($name);
-        if ($name === '') {
-            return 0;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_computermodels',
-            'WHERE' => ['name' => $name],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return (int) ($existing['id'] ?? 0);
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_computermodels', [
-            'name' => $name,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function findOrCreateLocation(int $entitiesId, string $name): int
-    {
-        global $DB;
-
-        $name = trim($name);
-        if ($name === '') {
-            return 0;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_locations',
-            'WHERE' => [
-                'entities_id' => $entitiesId,
-                'locations_id' => 0,
-                'name' => $name,
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return (int) ($existing['id'] ?? 0);
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_locations', [
-            'entities_id' => $entitiesId,
-            'is_recursive' => 0,
-            'locations_id' => 0,
-            'name' => $name,
-            'completename' => $name,
-            'level' => 1,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function findUserForDevice(int $entitiesId, array $device): int
-    {
-        global $DB;
-
-        $email = strtolower($this->extractNestedScalar($device, ['email', 'user.email', 'ownerEmail', 'owner.email', 'username', 'user.username']));
-        if ($email !== '' && str_contains($email, '@')) {
-            $userEmail = $DB->request([
-                'SELECT' => ['users_id'],
-                'FROM' => 'glpi_useremails',
-                'WHERE' => ['email' => $email],
-                'LIMIT' => 1,
-            ])->current();
-            if ($userEmail) {
-                $usersId = (int) ($userEmail['users_id'] ?? 0);
-                if ($usersId > 0) {
-                    return $usersId;
-                }
-            }
-        }
-
-        $username = $this->extractNestedScalar($device, ['username', 'user.username', 'owner', 'owner.name']);
-        if ($username === '') {
-            return 0;
-        }
-
-        $user = $DB->request([
-            'FROM' => 'glpi_users',
-            'WHERE' => [
-                'name' => $username,
-                'is_deleted' => 0,
-                [
-                    'OR' => [
-                        ['entities_id' => $entitiesId],
-                        ['entities_id' => 0],
-                    ],
-                ],
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        return $user ? (int) ($user['id'] ?? 0) : 0;
-    }
-
-    private function findComputerForDevice(int $instanceId, string $deviceId, string $udid, string $serial, string $uuid, int $entitiesId): int
-    {
-        global $DB;
-
-        $map = $this->findDeviceMap($instanceId, $deviceId, $udid, $serial);
-        if ($map) {
-            return (int) ($map['computers_id'] ?? 0);
-        }
-
-        if ($serial !== '') {
-            $computer = $DB->request([
-                'FROM' => 'glpi_computers',
-                'WHERE' => [
-                    'entities_id' => $entitiesId,
-                    'serial' => $serial,
-                    'is_deleted' => 0,
-                    'is_template' => 0,
-                ],
-                'LIMIT' => 1,
-            ])->current();
-            if ($computer) {
-                return (int) ($computer['id'] ?? 0);
-            }
-        }
-
-        if ($uuid !== '') {
-            $computer = $DB->request([
-                'FROM' => 'glpi_computers',
-                'WHERE' => [
-                    'entities_id' => $entitiesId,
-                    'uuid' => $uuid,
-                    'is_deleted' => 0,
-                    'is_template' => 0,
-                ],
-                'LIMIT' => 1,
-            ])->current();
-            if ($computer) {
-                return (int) ($computer['id'] ?? 0);
-            }
-        }
-
-        return 0;
     }
 
     private function findDeviceMap(int $instanceId, string $deviceId, string $udid, string $serial): ?array
@@ -1075,10 +394,10 @@ class SyncService
 
     private function resolveDeviceIdentifiers(array $device): array
     {
-        $deviceId = $this->extractScalar($device, ['id', 'deviceId', 'deviceID', 'device_id']);
-        $udid = $this->extractScalar($device, ['udid', 'UDID']);
-        $serial = $this->extractScalar($device, ['serialNumber', 'serialnumber', 'serial']);
-        $uuid = $this->extractScalar($device, ['uuid']);
+        $deviceId = InventoryPayloadBuilder::extractScalar($device, ['id', 'deviceId', 'deviceID', 'device_id']);
+        $udid = InventoryPayloadBuilder::extractScalar($device, ['udid', 'UDID']);
+        $serial = InventoryPayloadBuilder::extractScalar($device, ['serialNumber', 'serialnumber', 'serial']);
+        $uuid = InventoryPayloadBuilder::extractScalar($device, ['uuid']);
 
         if ($deviceId === '') {
             $deviceId = $udid !== ''
@@ -1101,25 +420,25 @@ class SyncService
             'udid' => $identifiers['udid'],
             'serial' => $identifiers['serial'],
             'uuid' => $identifiers['uuid'],
-            'name' => $this->resolveComputerNameFromDevice($instance, $device),
+            'name' => InventoryPayloadBuilder::resolveComputerNameFromDevice($instance, $device),
             'name_source' => (string) ($instance['name_source'] ?? 'device_name'),
-            'manufacturer' => $this->extractNestedScalar($device, ['manufacturer', 'vendor', 'hardware.manufacturer']),
-            'model' => $this->extractNestedScalar($device, ['model', 'modelName', 'hardware.model']),
-            'os_name' => $this->extractNestedScalar($device, ['os.prefix', 'osName', 'os.name', 'operatingSystem', 'platform']),
-            'os_version' => $this->extractNestedScalar($device, ['osVersion', 'os.version', 'operatingSystemVersion', 'systemVersion']),
-            'location' => $this->extractNestedScalar($device, ['location', 'location.name', 'site', 'site.name']),
-            'owner' => $this->extractNestedScalar($device, ['ownerName', 'owner.name', 'user.name']),
-            'email' => strtolower($this->extractNestedScalar($device, ['email', 'user.email', 'ownerEmail'])),
-            'ip' => $this->extractNestedScalar($device, ['ip', 'ipAddress', 'network.ipAddress']),
-            'asset_tag' => $this->extractNestedScalar($device, ['assetTag', 'asset_tag']),
-            'last_active' => $this->extractLastActiveAt($device),
-            'last_checkin' => $this->extractLastCheckinAt($device),
-            'enrollment_date' => $this->extractEnrollmentDate($device),
-            'public_ip' => $this->extractPublicIp($device),
-            'mac' => $this->extractMacAddress($device),
-            'battery_percent' => $this->extractBatteryPercent($device),
-            'storage_total' => $this->extractStorageTotalBytes($device),
-            'storage_free' => $this->extractStorageFreeBytes($device),
+            'manufacturer' => InventoryPayloadBuilder::extractNestedScalar($device, ['manufacturer', 'vendor', 'hardware.manufacturer']),
+            'model' => InventoryPayloadBuilder::extractNestedScalar($device, ['model', 'modelName', 'hardware.model']),
+            'os_name' => InventoryPayloadBuilder::extractNestedScalar($device, ['os.prefix', 'osName', 'os.name', 'operatingSystem', 'platform']),
+            'os_version' => InventoryPayloadBuilder::extractNestedScalar($device, ['osVersion', 'os.version', 'operatingSystemVersion', 'systemVersion']),
+            'location' => InventoryPayloadBuilder::extractNestedScalar($device, ['location', 'location.name', 'site', 'site.name']),
+            'owner' => InventoryPayloadBuilder::extractNestedScalar($device, ['ownerName', 'owner.name', 'user.name']),
+            'email' => strtolower(InventoryPayloadBuilder::extractNestedScalar($device, ['email', 'user.email', 'ownerEmail'])),
+            'ip' => InventoryPayloadBuilder::extractNestedScalar($device, ['ip', 'ipAddress', 'network.ipAddress']),
+            'asset_tag' => InventoryPayloadBuilder::extractNestedScalar($device, ['assetTag', 'asset_tag']),
+            'last_active' => InventoryPayloadBuilder::extractLastActiveAt($device),
+            'last_checkin' => InventoryPayloadBuilder::extractLastCheckinAt($device),
+            'enrollment_date' => InventoryPayloadBuilder::extractEnrollmentDate($device),
+            'public_ip' => InventoryPayloadBuilder::extractPublicIp($device),
+            'mac' => InventoryPayloadBuilder::extractMacAddress($device),
+            'battery_percent' => InventoryPayloadBuilder::extractBatteryPercent($device),
+            'storage_total' => InventoryPayloadBuilder::extractStorageTotalBytes($device),
+            'storage_free' => InventoryPayloadBuilder::extractStorageFreeBytes($device),
         ];
 
         return hash('sha256', json_encode($signatureData));
@@ -1146,973 +465,127 @@ class SyncService
         return hash('sha256', implode('|', $normalized));
     }
 
-    private function extractApps(array $device): array
-    {
-        foreach (['apps', 'installedApps', 'media', 'installedMedia'] as $key) {
-            if (isset($device[$key]) && is_array($device[$key])) {
-                $apps = [];
-                foreach ($device[$key] as $row) {
-                    if (is_string($row) || is_int($row) || is_float($row)) {
-                        $name = trim((string) $row);
-                        if ($name !== '') {
-                            $apps[] = [
-                                'name' => $name,
-                                'version' => '',
-                            ];
-                        }
-                        continue;
-                    }
-
-                    if (!is_array($row)) {
-                        continue;
-                    }
-
-                    $candidate = $row;
-                    if (isset($row['app']) && is_array($row['app'])) {
-                        $candidate = $row['app'];
-                    }
-
-                    $apps[] = [
-                        'name' => $this->extractScalar($candidate, [
-                            'name',
-                            'appName',
-                            'title',
-                            'displayName',
-                            'bundleName',
-                            'identifier',
-                            'bundleIdentifier',
-                        ]),
-                        'version' => $this->extractScalar($candidate, [
-                            'version',
-                            'appVersion',
-                            'shortVersion',
-                            'shortVersionString',
-                            'bundleVersion',
-                            'buildVersion',
-                        ]),
-                    ];
-                }
-                return $apps;
-            }
-        }
-
-        return [];
-    }
-
-    private function extractScalar(array $data, array $keys): string
-    {
-        foreach ($keys as $key) {
-            if (!array_key_exists($key, $data)) {
-                continue;
-            }
-
-            $value = $data[$key];
-            if (is_string($value) || is_int($value) || is_float($value)) {
-                $value = trim((string) $value);
-                if ($value !== '') {
-                    return $value;
-                }
-            }
-        }
-
-        return '';
-    }
-
-    private function extractNestedScalar(array $data, array $paths): string
-    {
-        foreach ($paths as $path) {
-            $segments = explode('.', $path);
-            $value = $data;
-            $found = true;
-
-            foreach ($segments as $segment) {
-                if (!is_array($value) || !array_key_exists($segment, $value)) {
-                    $found = false;
-                    break;
-                }
-                $value = $value[$segment];
-            }
-
-            if (!$found) {
-                continue;
-            }
-
-            if (is_string($value) || is_int($value) || is_float($value)) {
-                $text = trim((string) $value);
-                if ($text !== '') {
-                    return $text;
-                }
-            }
-        }
-
-        return '';
-    }
-
-    private function buildDeviceComment(array $device): string
-    {
-        $osPrefix = $this->extractNestedScalar($device, ['os.prefix', 'osName', 'os.name', 'operatingSystem', 'platform']);
-        $osVersion = $this->extractNestedScalar($device, ['osVersion', 'os.version', 'operatingSystemVersion', 'systemVersion']);
-        $os = trim($osPrefix . ($osPrefix !== '' && $osVersion !== '' ? ' ' : '') . $osVersion);
-        $ip = $this->extractNestedScalar($device, ['ip', 'ipAddress', 'network.ip', 'network.ipAddress']);
-        $assetTag = $this->extractNestedScalar($device, ['assetTag', 'asset_tag']);
-        $lastActive = $this->extractLastActiveAt($device);
-        $lastCheckin = $this->extractLastCheckinAt($device);
-        $enrollmentDate = $this->extractEnrollmentDate($device);
-        $publicIp = $this->extractPublicIp($device);
-        $mac = $this->extractMacAddress($device);
-        $battery = $this->extractBatteryPercent($device);
-        $storageTotal = $this->extractStorageTotalBytes($device);
-        $storageFree = $this->extractStorageFreeBytes($device);
-
-        $parts = [];
-        if ($os !== '') {
-            $parts[] = 'OS: ' . $os;
-        }
-        if ($ip !== '') {
-            $parts[] = 'IP: ' . $ip;
-        }
-        if ($assetTag !== '') {
-            $parts[] = 'AssetTag: ' . $assetTag;
-        }
-        if ($battery !== null) {
-            $parts[] = 'Battery: ' . $battery . '%';
-        }
-        if ($lastActive !== '') {
-            $parts[] = 'LastActive: ' . $lastActive;
-        }
-        if ($lastCheckin !== '') {
-            $parts[] = 'LastCheckin: ' . $lastCheckin;
-        }
-        if ($enrollmentDate !== '') {
-            $parts[] = 'Enrollment: ' . $enrollmentDate;
-        }
-        if ($publicIp !== '') {
-            $parts[] = 'PublicIP: ' . $publicIp;
-        }
-        if ($mac !== '') {
-            $parts[] = 'MAC: ' . $mac;
-        }
-        if ($storageTotal > 0) {
-            $used = max(0, $storageTotal - max(0, $storageFree));
-            $parts[] = sprintf('Storage: %.2f/%.2f GB', $used / 1024, $storageTotal / 1024);
-        }
-
-        return $parts === [] ? '' : ('JAMF Sync | ' . implode(' | ', $parts));
-    }
-
-    private function extractLastActiveAt(array $device): string
-    {
-        $candidates = [
-            $this->extractNestedScalar($device, [
-                'lastActivity',
-                'lastActivityAt',
-                'lastSeenAt',
-                'lastCheckIn',
-                'lastCheckin',
-                'lastCheckInAt',
-                'lastContact',
-                'lastSync',
-            ]),
-            $this->extractNestedScalar($device, [
-                'last_active',
-                'last_seen',
-                'last_activity',
-                'activity.lastSeenAt',
-                'activity.lastContact',
-                'activity.lastCheckin',
-            ]),
-        ];
-
-        foreach ($candidates as $value) {
-            $ts = $this->normalizeDateTime($value);
-            if ($ts !== '') {
-                return $ts;
-            }
-        }
-
-        return $this->extractLastCheckinAt($device);
-    }
-
-    private function extractLastCheckinAt(array $device): string
-    {
-        $candidates = [
-            $this->extractNestedScalar($device, ['lastCheckin', 'lastCheckIn', 'last_checkin']),
-            $this->extractNestedScalar($device, ['lastContact', 'lastSeenAt', 'activity.lastCheckin']),
-        ];
-
-        foreach ($candidates as $value) {
-            $ts = $this->normalizeDateTime($value);
-            if ($ts !== '') {
-                return $ts;
-            }
-        }
-
-        return '';
-    }
-
-    private function extractEnrollmentDate(array $device): string
-    {
-        $candidates = [
-            $this->extractNestedScalar($device, ['enrollmentDate', 'enrolledAt', 'enrolled', 'dateEnrolled']),
-            $this->extractNestedScalar($device, ['dep.enrollmentDate', 'dep.enrolledAt', 'management.enrollmentDate']),
-            $this->extractNestedScalar($device, ['created', 'dateCreated']),
-        ];
-
-        foreach ($candidates as $value) {
-            $ts = $this->normalizeDateTime($value);
-            if ($ts !== '') {
-                return $ts;
-            }
-        }
-
-        return '';
-    }
-
-    private function extractPublicIp(array $device): string
-    {
-        return $this->extractNestedScalar($device, [
-            'networkInformation.IPAddress',
-            'networkInformation.ipAddress',
-            'publicIP',
-            'publicIp',
-            'ip',
-            'ipAddress',
-            'network.ipAddress',
-        ]);
-    }
-
-    private function extractMacAddress(array $device): string
-    {
-        $mac = $this->extractNestedScalar($device, [
-            'networkInformation.WiFiMAC',
-            'networkInformation.wifiMac',
-            'networkInformation.BluetoothMAC',
-            'networkInformation.bluetoothMac',
-            'WiFiMAC',
-            'wifiMac',
-            'bluetoothMac',
-            'macAddress',
-            'mac',
-        ]);
-
-        return $this->normalizeMacAddress($mac);
-    }
-
-    private function normalizeMacAddress(string $mac): string
-    {
-        $mac = strtoupper(preg_replace('/[^A-Fa-f0-9]/', '', $mac) ?? '');
-        if (strlen($mac) !== 12) {
-            return '';
-        }
-        return implode(':', str_split($mac, 2));
-    }
-
-    private function extractBatteryPercent(array $device): ?int
-    {
-        $candidates = [
-            $this->extractNestedScalar($device, ['batteryLevel', 'battery_level', 'batteryPercent', 'battery.percent']),
-            $this->extractNestedScalar($device, ['battery.charge', 'battery.level', 'power.batteryLevel']),
-        ];
-
-        foreach ($candidates as $raw) {
-            if ($raw === '') {
-                continue;
-            }
-
-            $value = str_replace(',', '.', trim((string) $raw));
-            $value = rtrim($value, '%');
-            if (!is_numeric($value)) {
-                continue;
-            }
-
-            $num = (float) $value;
-            if ($num <= 1.0) {
-                $num *= 100.0;
-            }
-
-            return (int) max(0, min(100, round($num)));
-        }
-
-        return null;
-    }
-
-    private function extractStorageTotalBytes(array $device): int
-    {
-        $jamfGb = $this->extractNestedScalar($device, ['totalCapacity', 'storage.totalCapacity']);
-        if ($jamfGb !== '') {
-            $mib = $this->normalizeSizeToMib($jamfGb, 'GB');
-            if ($mib > 0) {
-                return $mib;
-            }
-        }
-
-        $candidates = [
-            $this->extractNestedScalar($device, ['capacity', 'totalSpace', 'totalStorage', 'storage.total', 'storage.totalSpace']),
-            $this->extractNestedScalar($device, ['disk.total', 'disk.totalBytes', 'storage.capacity']),
-        ];
-
-        foreach ($candidates as $raw) {
-            $mib = $this->normalizeSizeToMib($raw, 'auto');
-            if ($mib > 0) {
-                return $mib;
-            }
-        }
-
-        return 0;
-    }
-
-    private function extractStorageFreeBytes(array $device): int
-    {
-        $jamfGb = $this->extractNestedScalar($device, ['availableCapacity', 'storage.availableCapacity']);
-        if ($jamfGb !== '') {
-            $mib = $this->normalizeSizeToMib($jamfGb, 'GB');
-            if ($mib > 0) {
-                return $mib;
-            }
-        }
-
-        $candidates = [
-            $this->extractNestedScalar($device, ['availableCapacity', 'freeSpace', 'storage.free', 'storage.available', 'storage.availableSpace']),
-            $this->extractNestedScalar($device, ['disk.free', 'disk.freeBytes']),
-        ];
-
-        foreach ($candidates as $raw) {
-            $mib = $this->normalizeSizeToMib($raw, 'auto');
-            if ($mib > 0) {
-                return $mib;
-            }
-        }
-
-        return 0;
-    }
-
-    private function normalizeDateTime(string $value): string
-    {
-        $value = trim($value);
-        if ($value === '') {
-            return '';
-        }
-
-        $timestamp = strtotime($value);
-        if ($timestamp === false || $timestamp <= 0) {
-            return '';
-        }
-
-        return date('Y-m-d H:i:s', $timestamp);
-    }
-
-    private function normalizeSizeToMib(string $raw, string $assumeUnit = 'auto'): int
-    {
-        $raw = trim($raw);
-        if ($raw === '') {
-            return 0;
-        }
-
-        if (preg_match('/^([0-9]+(?:[.,][0-9]+)?)\s*(B|KB|MB|GB|TB|KIB|MIB|GIB|TIB)?$/i', $raw, $matches) === 1) {
-            $num = (float) str_replace(',', '.', $matches[1]);
-            $unit = strtoupper((string) ($matches[2] ?? ''));
-            if ($unit === '') {
-                $unit = strtoupper($assumeUnit);
-            }
-            if ($unit === 'AUTO') {
-                // JAMF often returns plain numeric storage capacities in GB.
-                $unit = $num > 0 && $num < 4096 ? 'GB' : 'B';
-            }
-            $factorMib = match ($unit) {
-                'TIB', 'TB' => 1024 * 1024,
-                'GIB', 'GB' => 1024,
-                'MIB', 'MB' => 1,
-                'KIB', 'KB' => 1 / 1024,
-                default => 1 / (1024 * 1024),
-            };
-            return (int) max(0, round($num * $factorMib));
-        }
-
-        if (is_numeric($raw)) {
-            $num = (float) $raw;
-            if (strtoupper($assumeUnit) === 'GB') {
-                return max(0, (int) round($num * 1024));
-            }
-            if (strtoupper($assumeUnit) === 'AUTO' && $num > 0 && $num < 4096) {
-                return max(0, (int) round($num * 1024));
-            }
-            return max(0, (int) round($num / (1024 * 1024)));
-        }
-
-        return 0;
-    }
-
-    private function syncOperatingSystemForComputer(int $entitiesId, int $computerId, array $device): array
+    /**
+     * Resolve the GLPI computer id after an inventory submission. Preferred link is the
+     * inventory Agent record (deviceid -> items_id); falls back to serial/uuid. The lookup
+     * is entity-agnostic because GLPI assigns the entity natively (which may differ from the
+     * instance's advisory target entity).
+     */
+    private function resolveComputerAfterInventory(string $deviceid, string $serial, string $uuid): int
     {
         global $DB;
 
-        $osName = $this->extractNestedScalar($device, [
-            'os.prefix',
-            'osName',
-            'os.name',
-            'operatingSystemName',
-            'operatingSystem',
-            'platform',
-        ]);
-        $osVersion = $this->extractNestedScalar($device, [
-            'osVersion',
-            'os.version',
-            'operatingSystemVersion',
-            'systemVersion',
-        ]);
-        $architecture = $this->extractNestedScalar($device, [
-            'architecture',
-            'os.architecture',
-            'arch',
-        ]);
-        $kernelVersion = $this->extractNestedScalar($device, [
-            'kernelVersion',
-            'os.kernelVersion',
-            'kernel',
-        ]);
-        $servicePack = $this->extractNestedScalar($device, [
-            'servicePack',
-            'service_pack',
-            'os.servicePack',
-            'os.service_pack',
-            'operatingSystemServicePack',
-        ]);
-        $edition = $this->extractNestedScalar($device, [
-            'edition',
-            'os.edition',
-            'operatingSystemEdition',
-            'osEdition',
-        ]);
-        $installDate = $this->extractNestedScalar($device, [
-            'os.installDate',
-            'os.installedAt',
-            'operatingSystemInstallDate',
-            'installDate',
-            'installedAt',
-        ]);
-        $installDate = $this->normalizeDateTime($installDate);
-
-        if ($osName === '') {
-            if ($osVersion !== '' && preg_match('/^([A-Za-z0-9._\\- ]+)/', $osVersion, $matches) === 1) {
-                $osName = trim($matches[1]);
-            } else {
-                $osName = 'Unknown OS';
+        if ($deviceid !== '' && $DB->tableExists('glpi_agents')) {
+            $agent = $DB->request([
+                'FROM' => 'glpi_agents',
+                'WHERE' => ['deviceid' => $deviceid, 'itemtype' => 'Computer'],
+                'LIMIT' => 1,
+            ])->current();
+            if ($agent && (int) ($agent['items_id'] ?? 0) > 0) {
+                return (int) $agent['items_id'];
             }
         }
 
-        $existing = $DB->request([
-            'FROM' => 'glpi_items_operatingsystems',
-            'WHERE' => [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'is_dynamic' => 1,
-            ],
-            'ORDER' => ['id ASC'],
-            'LIMIT' => 1,
-        ])->current();
-        $beforeState = $this->formatOperatingSystemState($existing);
+        foreach ([['serial', $serial], ['uuid', $uuid]] as [$field, $value]) {
+            if ($value === '') {
+                continue;
+            }
+            $row = $DB->request([
+                'FROM' => 'glpi_computers',
+                'WHERE' => [$field => $value, 'is_deleted' => 0, 'is_template' => 0],
+                'ORDER' => ['id DESC'],
+                'LIMIT' => 1,
+            ])->current();
+            if ($row) {
+                return (int) ($row['id'] ?? 0);
+            }
+        }
 
-        $operatingsystemsId = $this->findOrCreateOperatingSystem($osName);
-        if ($operatingsystemsId <= 0) {
-            return [
-                'changed' => false,
-                'before' => $beforeState,
-                'after' => [],
+        return 0;
+    }
+
+    /**
+     * Build monitoring run-change entries by diffing the computer snapshot taken before and
+     * after the inventory submission (device core fields, OS, and dynamic software list).
+     *
+     * @param array<string, mixed> $before
+     * @param array<string, mixed> $after
+     * @param array{device_id: string, udid: string, serial: string, uuid: string} $identifiers
+     * @return array<int, array<string, mixed>>
+     */
+    private function diffSnapshots(bool $wasNew, array $before, array $after, array $identifiers, int $computerId, string $name): array
+    {
+        $deviceId = (string) ($identifiers['device_id'] ?? '');
+        $entries = [];
+
+        $coreBefore = $before;
+        $coreAfter = $after;
+        unset($coreBefore['os'], $coreBefore['software'], $coreAfter['os'], $coreAfter['software']);
+
+        if ($wasNew || $coreBefore != $coreAfter) {
+            $entries[] = [
+                'change_type' => 'device',
+                'jamf_device_id' => $deviceId,
+                'computers_id' => $computerId,
+                'computer_name' => $name,
+                'object_name' => $name,
+                'details' => $wasNew ? __('Computer created', 'jamfsync') : __('Computer updated', 'jamfsync'),
+                'before_json' => $this->encodeJsonForLog($wasNew ? [] : $coreBefore),
+                'after_json' => $this->encodeJsonForLog($coreAfter),
+                'impacted_devices' => null,
             ];
         }
 
-        $operatingsystemversionsId = $this->findOrCreateOperatingSystemVersion($osVersion);
-        $operatingsystemarchitecturesId = $this->findOrCreateOperatingSystemArchitecture($architecture);
-        $operatingsystemkernelversionsId = $this->findOrCreateOperatingSystemKernelVersion($kernelVersion);
-        $operatingsystemservicepacksId = $this->findOrCreateOperatingSystemServicePack($servicePack);
-        $operatingsystemeditionsId = $this->findOrCreateOperatingSystemEdition($edition);
-        $afterState = [
-            'name' => $osName,
-            'version' => $osVersion,
-            'service_pack' => $servicePack,
-            'architecture' => $architecture,
-            'kernel' => $kernelVersion,
-            'edition' => $edition,
-            'install_date' => $installDate,
-        ];
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $payload = [
-            'items_id' => $computerId,
-            'itemtype' => 'Computer',
-            'operatingsystems_id' => $operatingsystemsId,
-            'operatingsystemversions_id' => $operatingsystemversionsId,
-            'operatingsystemservicepacks_id' => $operatingsystemservicepacksId,
-            'operatingsystemarchitectures_id' => $operatingsystemarchitecturesId,
-            'operatingsystemkernelversions_id' => $operatingsystemkernelversionsId,
-            'operatingsystemeditions_id' => $operatingsystemeditionsId,
-            'install_date' => $installDate !== '' ? $installDate : null,
-            'entities_id' => $entitiesId,
-            'is_recursive' => 0,
-            'is_deleted' => 0,
-            'is_dynamic' => 1,
-            'date_mod' => $now,
-        ];
-        $hasChanged = !$existing
-            || (int) ($existing['operatingsystems_id'] ?? 0) !== $operatingsystemsId
-            || (int) ($existing['operatingsystemversions_id'] ?? 0) !== $operatingsystemversionsId
-            || (int) ($existing['operatingsystemservicepacks_id'] ?? 0) !== $operatingsystemservicepacksId
-            || (int) ($existing['operatingsystemarchitectures_id'] ?? 0) !== $operatingsystemarchitecturesId
-            || (int) ($existing['operatingsystemkernelversions_id'] ?? 0) !== $operatingsystemkernelversionsId
-            || (int) ($existing['operatingsystemeditions_id'] ?? 0) !== $operatingsystemeditionsId
-            || trim((string) ($existing['install_date'] ?? '')) !== $installDate;
-
-        if ($existing) {
-            $DB->update('glpi_items_operatingsystems', $payload, ['id' => (int) $existing['id']]);
-            return [
-                'changed' => $hasChanged,
-                'before' => $beforeState,
-                'after' => $afterState,
+        $osBefore = (array) ($before['os'] ?? []);
+        $osAfter = (array) ($after['os'] ?? []);
+        if ($osAfter !== [] && $osBefore != $osAfter) {
+            $osName = trim((string) ($osAfter['name'] ?? '') . ' ' . (string) ($osAfter['version'] ?? ''));
+            $entries[] = [
+                'change_type' => 'os',
+                'jamf_device_id' => $deviceId,
+                'computers_id' => $computerId,
+                'computer_name' => $name,
+                'object_name' => $osName !== '' ? $osName : __('OS changed', 'jamfsync'),
+                'details' => __('OS changed', 'jamfsync'),
+                'before_json' => $this->encodeJsonForLog($osBefore),
+                'after_json' => $this->encodeJsonForLog($osAfter),
+                'impacted_devices' => null,
             ];
         }
 
-        $payload['date_creation'] = $now;
-        $DB->insert('glpi_items_operatingsystems', $payload);
+        // For a brand-new computer, every app would be a spurious "added" entry (dozens per
+        // device) — that is both noise and a memory hog on large first imports. The single
+        // "Computer created" entry above already conveys it; only log per-app deltas for
+        // computers that already existed.
+        if (!$wasNew) {
+            $swBefore = (array) ($before['software'] ?? []);
+            $swAfter = (array) ($after['software'] ?? []);
+            foreach (array_values(array_diff($swAfter, $swBefore)) as $app) {
+                $entries[] = $this->appChangeEntry($deviceId, $computerId, $name, (string) $app, __('App added', 'jamfsync'));
+            }
+            foreach (array_values(array_diff($swBefore, $swAfter)) as $app) {
+                $entries[] = $this->appChangeEntry($deviceId, $computerId, $name, (string) $app, __('App removed', 'jamfsync'));
+            }
+        }
+
+        return $entries;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function appChangeEntry(string $deviceId, int $computerId, string $name, string $appLabel, string $details): array
+    {
         return [
-            'changed' => true,
-            'before' => $beforeState,
-            'after' => $afterState,
-        ];
-    }
-
-    private function syncStorageForComputer(int $entitiesId, int $computerId, array $device): void
-    {
-        global $DB;
-
-        $totalMib = $this->extractStorageTotalBytes($device);
-        $freeMib = $this->extractStorageFreeBytes($device);
-        if ($totalMib <= 0 && $freeMib <= 0) {
-            return;
-        }
-
-        if ($totalMib > 0 && $freeMib > $totalMib) {
-            $freeMib = $totalMib;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_items_disks',
-            'WHERE' => [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'is_dynamic' => 1,
-                'name' => 'JAMF Storage',
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $payload = [
-            'entities_id' => $entitiesId,
-            'itemtype' => 'Computer',
-            'items_id' => $computerId,
-            'name' => 'JAMF Storage',
-            'device' => 'internal',
-            'mountpoint' => '/',
-            'filesystems_id' => 0,
-            // GLPI stores disk sizes in MiB.
-            'totalsize' => max(0, $totalMib),
-            'freesize' => max(0, $freeMib),
-            'is_deleted' => 0,
-            'is_dynamic' => 1,
-            'date_mod' => $now,
-        ];
-
-        if ($existing) {
-            $DB->update('glpi_items_disks', $payload, ['id' => (int) $existing['id']]);
-            return;
-        }
-
-        $payload['date_creation'] = $now;
-        $DB->insert('glpi_items_disks', $payload);
-    }
-
-    private function syncBatteryForComputer(int $entitiesId, int $computerId, array $device): void
-    {
-        global $DB;
-
-        $batteryPercent = $this->extractBatteryPercent($device);
-        if ($batteryPercent === null) {
-            return;
-        }
-
-        $deviceBatteryId = $this->findOrCreateJamfDeviceBattery($entitiesId);
-        if ($deviceBatteryId <= 0) {
-            return;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_items_devicebatteries',
-            'WHERE' => [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'is_dynamic' => 1,
-            ],
-            'ORDER' => ['id ASC'],
-            'LIMIT' => 1,
-        ])->current();
-
-        $payload = [
-            'items_id' => $computerId,
-            'itemtype' => 'Computer',
-            'devicebatteries_id' => $deviceBatteryId,
-            'is_deleted' => 0,
-            'is_dynamic' => 1,
-            'entities_id' => $entitiesId,
-            'is_recursive' => 0,
-            'real_capacity' => max(0, min(100, $batteryPercent)),
-        ];
-
-        if ($existing) {
-            $DB->update('glpi_items_devicebatteries', $payload, ['id' => (int) $existing['id']]);
-            return;
-        }
-
-        $DB->insert('glpi_items_devicebatteries', $payload);
-    }
-
-    private function syncNetworkForComputer(int $entitiesId, int $computerId, array $device): void
-    {
-        global $DB;
-
-        $mac = $this->extractMacAddress($device);
-        $publicIp = $this->extractPublicIp($device);
-        if ($mac === '' && $publicIp === '') {
-            return;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_networkports',
-            'WHERE' => [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'is_dynamic' => 1,
-                'name' => 'JAMF Network',
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $payload = [
-            'items_id' => $computerId,
-            'itemtype' => 'Computer',
-            'entities_id' => $entitiesId,
-            'is_recursive' => 0,
-            'logical_number' => 0,
-            'name' => 'JAMF Network',
-            'instantiation_type' => 'NetworkPortWifi',
-            'mac' => $mac,
-            'comment' => $publicIp !== '' ? ('Public IP: ' . $publicIp) : '',
-            'is_deleted' => 0,
-            'is_dynamic' => 1,
-            'date_mod' => $now,
-            'ifmtu' => 0,
-            'ifspeed' => 0,
-            'ifconnectionstatus' => 0,
-            'ifinbytes' => 0,
-            'ifinerrors' => 0,
-            'ifoutbytes' => 0,
-            'ifouterrors' => 0,
-            'trunk' => 0,
-        ];
-
-        if ($existing) {
-            $networkPortId = (int) $existing['id'];
-            $DB->update('glpi_networkports', $payload, ['id' => $networkPortId]);
-            $this->ensureWifiPortSubtype($networkPortId);
-            return;
-        }
-
-        $payload['date_creation'] = $now;
-        $DB->insert('glpi_networkports', $payload);
-        $networkPortId = (int) $DB->insertId();
-        if ($networkPortId > 0) {
-            $this->ensureWifiPortSubtype($networkPortId);
-        }
-    }
-
-    private function ensureWifiPortSubtype(int $networkPortId): void
-    {
-        global $DB;
-
-        if ($networkPortId <= 0 || !$DB->tableExists('glpi_networkportwifis')) {
-            return;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_networkportwifis',
-            'WHERE' => ['networkports_id' => $networkPortId],
-            'LIMIT' => 1,
-        ])->current();
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        if ($existing) {
-            $DB->update('glpi_networkportwifis', [
-                'date_mod' => $now,
-            ], ['id' => (int) $existing['id']]);
-            return;
-        }
-
-        $DB->insert('glpi_networkportwifis', [
-            'networkports_id' => $networkPortId,
-            'items_devicenetworkcards_id' => 0,
-            'wifinetworks_id' => 0,
-            'networkportwifis_id' => 0,
-            'version' => null,
-            'mode' => null,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-    }
-
-    private function findOrCreateJamfDeviceBattery(int $entitiesId): int
-    {
-        global $DB;
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_devicebatteries',
-            'WHERE' => [
-                'designation' => 'JAMF Battery',
-                'entities_id' => $entitiesId,
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            $id = (int) ($existing['id'] ?? 0);
-            if ($id > 0 && (int) ($existing['capacity'] ?? 0) <= 0) {
-                $DB->update('glpi_devicebatteries', [
-                    'capacity' => 100,
-                    'date_mod' => $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s'),
-                ], ['id' => $id]);
-            }
-            return $id;
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_devicebatteries', [
-            'designation' => 'JAMF Battery',
-            'comment' => 'Managed by JAMF Sync plugin',
-            'manufacturers_id' => 0,
-            'voltage' => null,
-            'capacity' => 100,
-            'devicebatterytypes_id' => 0,
-            'entities_id' => $entitiesId,
-            'is_recursive' => 0,
-            'devicebatterymodels_id' => null,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-
-        return (int) $DB->insertId();
-    }
-
-    private function findOrCreateOperatingSystem(string $name): int
-    {
-        global $DB;
-
-        $name = trim($name);
-        if ($name === '') {
-            return 0;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_operatingsystems',
-            'WHERE' => ['name' => $name],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return (int) ($existing['id'] ?? 0);
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_operatingsystems', [
-            'name' => $name,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function findOrCreateOperatingSystemVersion(string $name): int
-    {
-        global $DB;
-
-        $name = trim($name);
-        if ($name === '') {
-            return 0;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_operatingsystemversions',
-            'WHERE' => ['name' => $name],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return (int) ($existing['id'] ?? 0);
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_operatingsystemversions', [
-            'name' => $name,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function findOrCreateOperatingSystemArchitecture(string $name): int
-    {
-        global $DB;
-
-        $name = trim($name);
-        if ($name === '') {
-            return 0;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_operatingsystemarchitectures',
-            'WHERE' => ['name' => $name],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return (int) ($existing['id'] ?? 0);
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_operatingsystemarchitectures', [
-            'name' => $name,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function findOrCreateOperatingSystemKernelVersion(string $name): int
-    {
-        global $DB;
-
-        $name = trim($name);
-        if ($name === '') {
-            return 0;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_operatingsystemkernelversions',
-            'WHERE' => ['name' => $name],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return (int) ($existing['id'] ?? 0);
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_operatingsystemkernelversions', [
-            'name' => $name,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function findOrCreateOperatingSystemServicePack(string $name): int
-    {
-        global $DB;
-
-        $name = trim($name);
-        if ($name === '') {
-            return 0;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_operatingsystemservicepacks',
-            'WHERE' => ['name' => $name],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return (int) ($existing['id'] ?? 0);
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_operatingsystemservicepacks', [
-            'name' => $name,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function findOrCreateOperatingSystemEdition(string $name): int
-    {
-        global $DB;
-
-        $name = trim($name);
-        if ($name === '') {
-            return 0;
-        }
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_operatingsystemeditions',
-            'WHERE' => ['name' => $name],
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            return (int) ($existing['id'] ?? 0);
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $DB->insert('glpi_operatingsystemeditions', [
-            'name' => $name,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-        return (int) $DB->insertId();
-    }
-
-    private function getSoftwareVersionMeta(int $softwareVersionId): array
-    {
-        global $DB;
-
-        if ($softwareVersionId <= 0) {
-            return [
-                'app_name' => '',
-                'version' => '',
-            ];
-        }
-
-        $row = $DB->request([
-            'SELECT' => [
-                'glpi_softwareversions.name AS version',
-                'glpi_softwares.name AS app_name',
-            ],
-            'FROM' => 'glpi_softwareversions',
-            'LEFT JOIN' => [
-                'glpi_softwares' => [
-                    'FKEY' => [
-                        'glpi_softwareversions' => 'softwares_id',
-                        'glpi_softwares' => 'id',
-                    ],
-                ],
-            ],
-            'WHERE' => [
-                'glpi_softwareversions.id' => $softwareVersionId,
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        return [
-            'app_name' => trim((string) ($row['app_name'] ?? '')),
-            'version' => trim((string) ($row['version'] ?? '')),
+            'change_type' => 'app',
+            'jamf_device_id' => $deviceId,
+            'computers_id' => $computerId,
+            'computer_name' => $name,
+            'object_name' => $appLabel,
+            'details' => $details,
+            'before_json' => null,
+            'after_json' => null,
+            'impacted_devices' => null,
         ];
     }
 
@@ -2174,6 +647,33 @@ class SyncService
             'LIMIT' => 1,
         ])->current();
 
+        // Dynamic (inventory-managed) software, for the monitoring app-change diff.
+        $softwareRows = $DB->request([
+            'SELECT' => ['glpi_softwares.name AS sname', 'glpi_softwareversions.name AS vname'],
+            'FROM' => 'glpi_items_softwareversions',
+            'LEFT JOIN' => [
+                'glpi_softwareversions' => [
+                    'FKEY' => ['glpi_items_softwareversions' => 'softwareversions_id', 'glpi_softwareversions' => 'id'],
+                ],
+                'glpi_softwares' => [
+                    'FKEY' => ['glpi_softwareversions' => 'softwares_id', 'glpi_softwares' => 'id'],
+                ],
+            ],
+            'WHERE' => [
+                'glpi_items_softwareversions.itemtype' => 'Computer',
+                'glpi_items_softwareversions.items_id' => $computerId,
+                'glpi_items_softwareversions.is_dynamic' => 1,
+            ],
+        ]);
+        $software = [];
+        foreach ($softwareRows as $swRow) {
+            $label = trim((string) ($swRow['sname'] ?? '') . ' ' . (string) ($swRow['vname'] ?? ''));
+            if ($label !== '') {
+                $software[] = $label;
+            }
+        }
+        sort($software);
+
         return [
             'id' => (int) ($computer['id'] ?? 0),
             'name' => trim((string) ($computer['name'] ?? '')),
@@ -2188,6 +688,7 @@ class SyncService
             'battery_percent' => (int) ($battery['real_capacity'] ?? 0),
             'public_ip' => trim((string) ($network['comment'] ?? '')),
             'mac' => trim((string) ($network['mac'] ?? '')),
+            'software' => $software,
         ];
     }
 
@@ -2285,6 +786,36 @@ class SyncService
         return (int) $DB->insertId();
     }
 
+    /**
+     * The most recent still-active (queued/running) sync job, if any. Used by the UI to
+     * show a persistent "sync running" indicator that survives page reloads. Returns the
+     * same shape as getSyncJob() (progress_percent + stall detection applied).
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getLatestActiveJob(): ?array
+    {
+        global $DB;
+
+        if (!$DB->tableExists('glpi_plugin_jamfsync_syncjobs')) {
+            return null;
+        }
+
+        $row = $DB->request([
+            'SELECT' => ['id'],
+            'FROM' => 'glpi_plugin_jamfsync_syncjobs',
+            'WHERE' => ['status' => ['queued', 'running']],
+            'ORDER' => ['id DESC'],
+            'LIMIT' => 1,
+        ])->current();
+
+        if (!$row) {
+            return null;
+        }
+
+        return $this->getSyncJob((int) $row['id']);
+    }
+
     public function getSyncJob(int $jobId): ?array
     {
         global $DB;
@@ -2309,7 +840,7 @@ class SyncService
             && strtotime((string) ($row['date_mod'] ?? '')) > 0
             && strtotime((string) ($row['date_mod'] ?? '')) < (time() - 180)
         ) {
-            $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
+            $now = date('Y-m-d H:i:s'); // real wall-clock for job timing (async run freezes glpi_currenttime)
             $stalledMessage = __('Sync job appears stalled (no progress heartbeat).', 'jamfsync');
             $this->updateSyncJob($jobId, [
                 'status' => 'stalled',
@@ -2367,6 +898,10 @@ class SyncService
             return;
         }
 
+        // Async syncs run in a single request, so $_SESSION['glpi_currenttime'] is frozen for
+        // the whole run. Stamp the job heartbeat with REAL wall-clock time — otherwise a
+        // long-running job never moves date_mod and getSyncJob() falsely flags it "stalled".
+        $fields['date_mod'] = date('Y-m-d H:i:s');
         $DB->update('glpi_plugin_jamfsync_syncjobs', $fields, ['id' => $jobId]);
     }
 

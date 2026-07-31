@@ -1,13 +1,14 @@
 import './jamfsync.css';
 import RunnerApp from './RunnerApp.vue';
+import StatusBanner from './StatusBanner.vue';
 
-// Bootstrap for the JAMF Sync runner. This bundle is registered globally as a footer JS
-// module ($PLUGIN_HOOKS['javascript_module']), so it runs after GLPI's build/vue/app.js
-// (window.Vue / window._vue available). It is a no-op on every page that lacks the runner
-// mount node, i.e. everywhere except the plugin's config page.
+// Bootstrap for the JAMF Sync Vue components. This bundle is registered globally as a
+// footer JS module ($PLUGIN_HOOKS['javascript_module']), so it runs after GLPI's
+// build/vue/app.js (window.Vue / window._vue available). Each mount is a no-op on pages
+// that lack its mount node:
+//   - #jamfsync-runner-app     -> the full sync runner (config runner page only)
+//   - #jamfsync-status-banner  -> the persistent "sync running" strip (all plugin pages)
 (function () {
-    const MOUNT_ID = 'jamfsync-runner-app';
-
     function readJson(value, fallback) {
         if (!value) {
             return fallback;
@@ -19,16 +20,22 @@ import RunnerApp from './RunnerApp.vue';
         }
     }
 
+    function vueReady() {
+        return window.Vue && typeof window.Vue.createApp === 'function';
+    }
+
+    // Returns true when handled (mounted, already mounted, or node absent),
+    // false only when the node is present but GLPI's Vue runtime is not ready yet.
     function mountRunner() {
-        const root = document.getElementById(MOUNT_ID);
+        const root = document.getElementById('jamfsync-runner-app');
         if (!root) {
-            return false; // Not the config page — nothing to do.
+            return true;
         }
         if (root.__vue_app__ !== undefined) {
-            return true; // Already mounted.
+            return true;
         }
-        if (!window.Vue || typeof window.Vue.createApp !== 'function') {
-            return false; // GLPI Vue runtime not ready yet.
+        if (!vueReady()) {
+            return false;
         }
 
         const instances = readJson(root.dataset.instances, []);
@@ -54,14 +61,37 @@ import RunnerApp from './RunnerApp.vue';
         return true;
     }
 
+    function mountStatusBanner() {
+        const root = document.getElementById('jamfsync-status-banner');
+        if (!root) {
+            return true;
+        }
+        if (root.__vue_app__ !== undefined) {
+            return true;
+        }
+        if (!vueReady()) {
+            return false;
+        }
+
+        const labels = readJson(root.dataset.labels, {});
+        window.Vue.createApp(StatusBanner, { labels, apiUrl: 'sync.ajax.php' }).mount(root);
+
+        return true;
+    }
+
     function start() {
-        if (mountRunner()) {
+        let doneRunner = mountRunner();
+        let doneBanner = mountStatusBanner();
+        if (doneRunner && doneBanner) {
             return;
         }
+
         let tries = 0;
         const timer = window.setInterval(function () {
             tries += 1;
-            if (mountRunner() || tries >= 60) {
+            doneRunner = doneRunner || mountRunner();
+            doneBanner = doneBanner || mountStatusBanner();
+            if ((doneRunner && doneBanner) || tries >= 60) {
                 window.clearInterval(timer);
             }
         }, 250);

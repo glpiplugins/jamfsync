@@ -71,6 +71,9 @@ try {
         }
         ignore_user_abort(true);
         set_time_limit(0);
+        // Large first-time syncs (hundreds of devices, native inventory import) need more
+        // than the default 128M; GLPI's inventory engine is memory-heavy per submission.
+        @ini_set('memory_limit', '1024M');
         @flush();
         if (function_exists('fastcgi_finish_request')) {
             @fastcgi_finish_request();
@@ -104,6 +107,13 @@ try {
         $json([
             'ok' => true,
             'job' => $job,
+        ]);
+    }
+
+    if ($action === 'active') {
+        $json([
+            'ok' => true,
+            'job' => $service->getLatestActiveJob(),
         ]);
     }
 

@@ -13,7 +13,7 @@ if (!defined('GLPI_ROOT')) {
 
 require_once __DIR__ . '/hook.php';
 
-define('PLUGIN_JAMFSYNC_VERSION', '0.4.0');
+define('PLUGIN_JAMFSYNC_VERSION', '0.5.0');
 
 function plugin_version_jamfsync(): array
 {
@@ -133,6 +133,7 @@ function plugin_jamfsync_get_schema_migrations(): array
         '0.3.0' => __DIR__ . '/install/migrations/0001_0.3.0.php',
         '0.3.7' => __DIR__ . '/install/migrations/0002_0.3.7.php',
         '0.3.8' => __DIR__ . '/install/migrations/0003_0.3.8.php',
+        '0.5.0' => __DIR__ . '/install/migrations/0004_0.5.0.php',
     ];
 }
 
