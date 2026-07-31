@@ -171,10 +171,13 @@ final class InventoryPayloadBuilder
         if ($version !== '') {
             $os->version = $version;
         }
+        // GLPI's inventory turns this operatingsystem section into a synthesized "iOS"
+        // software entry. Its version-dedup lookup queries `arch = ''` but stores NULL when
+        // arch is absent, and SQL `NULL = ''` is false — so a missing arch creates a fresh
+        // version row PER DEVICE. Always emit a stable arch so the OS version de-duplicates
+        // (device-reported arch, else arm64 which is correct for the Apple fleet).
         $arch = self::extractNestedScalar($device, ['architecture', 'os.architecture', 'arch']);
-        if ($arch !== '') {
-            $os->arch = $arch;
-        }
+        $os->arch = $arch !== '' ? $arch : 'arm64';
         $kernel = self::extractNestedScalar($device, ['kernelVersion', 'os.kernelVersion', 'kernel']);
         if ($kernel !== '') {
             $os->kernel_version = $kernel;

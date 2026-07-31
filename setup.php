@@ -13,7 +13,7 @@ if (!defined('GLPI_ROOT')) {
 
 require_once __DIR__ . '/hook.php';
 
-define('PLUGIN_JAMFSYNC_VERSION', '0.5.0');
+define('PLUGIN_JAMFSYNC_VERSION', '0.5.1');
 
 function plugin_version_jamfsync(): array
 {

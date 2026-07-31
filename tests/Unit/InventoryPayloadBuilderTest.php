@@ -65,6 +65,20 @@ final class InventoryPayloadBuilderTest extends TestCase
         self::assertSame('10.0.0.5', $c->networks[0]->ipaddress);
     }
 
+    public function testOperatingSystemArchDefaultsToArm64WhenNotReported(): void
+    {
+        // A stable, non-empty arch is required so GLPI's synthesized OS-as-software version
+        // de-duplicates instead of creating one row per device (empty arch -> NULL -> no match).
+        $device = ['name' => 'X', 'osName' => 'iPadOS', 'osVersion' => '17.5.1']; // no architecture
+        $doc = InventoryPayloadBuilder::build($device, ['id' => 1, 'name_source' => 'device_name'], $this->ids());
+        self::assertSame('arm64', $doc->content->operatingsystem->arch);
+
+        // Reported arch is preserved.
+        $device2 = $device + ['architecture' => 'x86_64'];
+        $doc2 = InventoryPayloadBuilder::build($device2, ['id' => 1, 'name_source' => 'device_name'], $this->ids());
+        self::assertSame('x86_64', $doc2->content->operatingsystem->arch);
+    }
+
     public function testAssetTagNameSourcePrefersAssetTag(): void
     {
         $device = ['name' => 'DeviceName', 'assetTag' => 'AT-777'];
