@@ -1,0 +1,52 @@
+{#
+ # JAMF Sync — retention periods (tab on Setup > Data and Privacy).
+ # Rendered by GlpiPlugin\Jamfsync\Ui\PrivacyTab; same layout as GLPI's own retention tabs.
+ # Saved by GlpiPlugin\Jamfsync\Controller\RetentionController (POST form_path).
+ #}
+{% extends "pages/setup/general/base_form.html.twig" %}
+{% import 'components/form/fields_macros.html.twig' as fields %}
+
+{% block config_fields %}
+    {{ fields.largeTitle(__('JAMF Sync data retention', 'jamfsync'), 'ti ti-brand-apple') }}
+    <p class="col-12 text-muted small mb-3">{{ __('Periods in days; 0 keeps the data forever. The automatic action below deletes older entries once a day.', 'jamfsync') }}</p>
+
+    {{ fields.numberField('retention_runchanges_days', settings.retention_runchanges_days, __('Change details (days)', 'jamfsync'), {
+        min: 0,
+        max: max_days,
+        helper: __('Changed devices, apps and OS per sync run, with computer names and before/after values. These may contain personal data (e.g. device names); keep them as short as practical.', 'jamfsync'),
+    }) }}
+
+    {{ fields.numberField('retention_syncruns_days', settings.retention_syncruns_days, __('Sync runs (days)', 'jamfsync'), {
+        min: 0,
+        max: max_days,
+        helper: __('Monitoring history: instance, counts and messages per run. Deleting a run also deletes its change details.', 'jamfsync'),
+    }) }}
+
+    {{ fields.numberField('retention_missing_devicemaps_days', settings.retention_missing_devicemaps_days, __('Mappings of devices not seen in JAMF (days)', 'jamfsync'), {
+        min: 0,
+        max: max_days,
+        helper: __('Removes the JAMF device mapping of devices that no sync has received for that long. GLPI keeps the computers; a device that comes back is mapped again.', 'jamfsync'),
+    }) }}
+
+    {% set jobs_info %}
+        {{ __('Finished sync jobs are deleted after %d days.', 'jamfsync')|format(jobs_days) }}
+        {{ __('The computers and their history in GLPI follow the "Historical logs" settings of this page.', 'jamfsync') }}
+    {% endset %}
+    {{ fields.htmlField('', jobs_info, __('Also purged', 'jamfsync')) }}
+
+    {% set crontask_config %}
+        {% if crontask.isNewItem() %}
+            <span class="badge bg-warning text-warning-fg">{{ __('Not registered', 'jamfsync') }}</span>
+        {% else %}
+            {% if crontask.fields['state'] == 0 %}
+                <span class="badge bg-danger text-danger-fg">{{ __('Disabled') }}</span>
+            {% else %}
+                <span class="badge bg-success text-success-fg">{{ __('Enabled') }}</span>
+            {% endif %}
+            <a href="{{ crontask.getFormURLWithID(crontask.getID()) }}">
+                {{ __('Configure automatic action') }}
+            </a>
+        {% endif %}
+    {% endset %}
+    {{ fields.htmlField('', crontask_config, 'CronTask'|itemtype_name) }}
+{% endblock %}

@@ -13,7 +13,7 @@ if (!defined('GLPI_CONFIG_DIR')) {
 }
 
 if (!is_dir(GLPI_CONFIG_DIR)) {
-    mkdir(GLPI_CONFIG_DIR, 0777, true);
+    mkdir(GLPI_CONFIG_DIR, 0o777, true);
 }
 
 $keyFile = GLPI_CONFIG_DIR . '/glpicrypt.key';

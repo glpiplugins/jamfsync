@@ -7,7 +7,10 @@ namespace GlpiPlugin\Jamfsync;
 use CommonDBTM;
 use Glpi\Application\View\TemplateRenderer;
 use GlpiPlugin\Jamfsync\Api\JamfClient;
-use Plugin;
+use GlpiPlugin\Jamfsync\Service\EntityRuleManager;
+use GlpiPlugin\Jamfsync\Service\ImportRuleManager;
+use GlpiPlugin\Jamfsync\Service\InventoryPayloadBuilder;
+use GlpiPlugin\Jamfsync\Ui\ConfigMenu;
 use Session;
 
 /**
@@ -21,7 +24,7 @@ use Session;
 class Instance extends CommonDBTM
 {
     // Keep in sync with Access::RIGHT ('plugin_jamfsync_config').
-    public static $rightname = 'plugin_jamfsync_config';
+    public static string $rightname = 'plugin_jamfsync_config';
 
     public static function getTypeName($nb = 0): string
     {
@@ -38,15 +41,14 @@ class Instance extends CommonDBTM
         return 'ti ti-brand-apple';
     }
 
-    public static function getFormURL($full = true): string
-    {
-        return Plugin::getWebDir('jamfsync', $full) . '/front/instance.form.php';
-    }
+    // getFormURL(): the core default already resolves to /plugins/jamfsync/front/instance.form.php.
 
     public static function getSearchURL($full = true): string
     {
+        global $CFG_GLPI;
+
         // The instances list lives on the plugin config page, not a dedicated search page.
-        return Plugin::getWebDir('jamfsync', $full) . '/front/config.form.php';
+        return ($full ? $CFG_GLPI['root_doc'] : '') . '/plugins/jamfsync/front/config.form.php';
     }
 
     // The plugin exposes a single right ('plugin_jamfsync_config'): READ = view,
@@ -54,22 +56,22 @@ class Instance extends CommonDBTM
     // (add / save / delete) work without introducing extra right bits.
     public static function canView(): bool
     {
-        return (bool) Session::haveRight(self::$rightname, READ);
+        return Session::haveRight(self::$rightname, READ);
     }
 
     public static function canCreate(): bool
     {
-        return (bool) Session::haveRight(self::$rightname, UPDATE);
+        return Session::haveRight(self::$rightname, UPDATE);
     }
 
     public static function canUpdate(): bool
     {
-        return (bool) Session::haveRight(self::$rightname, UPDATE);
+        return Session::haveRight(self::$rightname, UPDATE);
     }
 
     public static function canPurge(): bool
     {
-        return (bool) Session::haveRight(self::$rightname, UPDATE);
+        return Session::haveRight(self::$rightname, UPDATE);
     }
 
     public function post_getEmpty()
@@ -82,6 +84,47 @@ class Instance extends CommonDBTM
         $this->fields['name_source'] = 'device_name';
         $this->fields['request_timeout'] = 30;
         $this->fields['page_size'] = 200;
+        $this->fields['inventory_tag'] = '';
+        // New instances place their devices in the target entity by default; instances
+        // upgraded from before 0.8.0 keep relying on the existing entity rules (opt-in).
+        $this->fields['manage_entity_rule'] = 1;
+    }
+
+    public function post_addItem()
+    {
+        $this->syncEntityRule();
+        (new ImportRuleManager())->sync($this->fields);
+    }
+
+    public function post_updateItem($history = true)
+    {
+        if (array_intersect(['name', 'inventory_tag', 'entities_id', 'manage_entity_rule'], $this->updates) !== []) {
+            $this->syncEntityRule();
+        }
+        if (array_intersect(['name', 'inventory_tag'], $this->updates) !== []) {
+            (new ImportRuleManager())->sync($this->fields);
+        }
+    }
+
+    public function cleanDBonPurge()
+    {
+        (new EntityRuleManager())->remove((int) ($this->fields['rules_id'] ?? 0));
+        (new ImportRuleManager())->remove((int) $this->getID());
+    }
+
+    /**
+     * Create/update/remove the managed entity rule and remember its id (stored directly, so
+     * no second update cycle or history entry is triggered).
+     */
+    private function syncEntityRule(): void
+    {
+        global $DB;
+
+        $rulesId = (new EntityRuleManager())->sync($this->fields);
+        if ($rulesId !== (int) ($this->fields['rules_id'] ?? 0)) {
+            $DB->update(self::getTable(), ['rules_id' => $rulesId], ['id' => (int) $this->getID()]);
+            $this->fields['rules_id'] = $rulesId;
+        }
     }
 
     public function showForm($ID, array $options = [])
@@ -95,6 +138,11 @@ class Instance extends CommonDBTM
         TemplateRenderer::getInstance()->display('@jamfsync/instance_form.html.twig', [
             'item' => $this,
             'params' => $options,
+            'default_tag' => $this->isNewItem()
+                ? 'jamfsync-<ID>'
+                : InventoryPayloadBuilder::inventoryTag(['id' => $this->getID()]),
+            'test_url' => ConfigMenu::pluginUrl('/Instances/TestConnection'),
+            'takeover_url' => ConfigMenu::pluginUrl('/Instances/' . (int) $this->getID() . '/TakeoverPreview'),
         ]);
 
         return true;
@@ -129,7 +177,12 @@ class Instance extends CommonDBTM
                 ? 'asset_tag'
                 : 'device_name';
         }
-        foreach (['pull_devices', 'pull_apps', 'verify_tls', 'is_active'] as $flag) {
+        if (isset($input['inventory_tag'])) {
+            $input['inventory_tag'] = mb_substr(trim((string) $input['inventory_tag']), 0, 255);
+        }
+        // Set by the plugin only (see syncEntityRule()).
+        unset($input['rules_id']);
+        foreach (['pull_devices', 'pull_apps', 'verify_tls', 'is_active', 'manage_entity_rule'] as $flag) {
             if (isset($input[$flag])) {
                 $input[$flag] = (int) $input[$flag] > 0 ? 1 : 0;
             }
@@ -232,6 +285,20 @@ class Instance extends CommonDBTM
                 'field' => 'last_success_at',
                 'name' => __('Last success', 'jamfsync'),
                 'datatype' => 'datetime',
+            ],
+            [
+                'id' => 9,
+                'table' => $table,
+                'field' => 'inventory_tag',
+                'name' => __('Inventory tag', 'jamfsync'),
+                'datatype' => 'string',
+            ],
+            [
+                'id' => 10,
+                'table' => $table,
+                'field' => 'manage_entity_rule',
+                'name' => __('Manage entity rule', 'jamfsync'),
+                'datatype' => 'bool',
             ],
             [
                 'id' => 7,

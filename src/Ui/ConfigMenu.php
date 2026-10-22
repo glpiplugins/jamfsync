@@ -57,10 +57,12 @@ final class ConfigMenu
             'changed'      => __('Changed', 'jamfsync'),
             'apps'         => __('Apps', 'jamfsync'),
             'monitoring'   => __('Monitoring', 'jamfsync'),
+            'sync_queued'  => __('Sync queued', 'jamfsync'),
+            'queued_hint'  => __('It starts with the next run of the automatic action ProcessSyncQueue (usually within a minute).', 'jamfsync'),
         ];
         echo "<div id='jamfsync-status-banner' data-labels='"
             . htmlescape(json_encode($bannerLabels, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
-            . "'></div>";
+            . "' data-api-base='" . htmlescape(self::syncApiBase()) . "'></div>";
 
         echo "<div class='d-flex card-tabs flex-column flex-md-row vertical'>";
 
@@ -68,12 +70,31 @@ final class ConfigMenu
             'items' => $items,
         ]);
 
+        // min-width: 0 lets wide tables scroll inside .table-responsive instead of widening the page.
         if ($contentCard) {
-            echo "<div class='tab-content p-2 flex-grow-1 card border-start-0' style='min-height: 150px'>";
+            echo "<div class='tab-content p-2 flex-grow-1 card border-start-0' style='min-height: 150px; min-width: 0'>";
         } else {
-            echo "<div class='tab-content flex-grow-1 ps-md-3' style='min-height: 150px'>";
+            echo "<div class='tab-content flex-grow-1 ps-md-3' style='min-height: 150px; min-width: 0'>";
         }
         echo "<div class='tab-pane fade show active' role='tabpanel'>";
+    }
+
+    /**
+     * Base URL of the SyncController JSON routes (start, job status, active job).
+     */
+    public static function syncApiBase(): string
+    {
+        return self::pluginUrl('/Sync');
+    }
+
+    /**
+     * URL of a plugin controller route, e.g. pluginUrl('/Sync') -> /glpi/plugins/jamfsync/Sync.
+     */
+    public static function pluginUrl(string $path): string
+    {
+        global $CFG_GLPI;
+
+        return $CFG_GLPI['root_doc'] . '/plugins/jamfsync' . $path;
     }
 
     public static function close(): void

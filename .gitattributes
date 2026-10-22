@@ -1,0 +1,13 @@
+# Keep development files out of `git archive` (tools/build-release.sh builds the release archive).
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/.php-cs-fixer.dist.php export-ignore
+/eslint.config.js export-ignore
+/package.json export-ignore
+/package-lock.json export-ignore
+/phpstan.neon.dist export-ignore
+/phpunit.xml.dist export-ignore
+/vite.config.js export-ignore
+/src/vue export-ignore
+/tests export-ignore
+/tools export-ignore

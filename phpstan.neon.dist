@@ -1,0 +1,20 @@
+# Static analysis against the GLPI 12 sources of the official image, e.g.:
+#   docker run --rm --entrypoint php -v <glpi-core>:/plugins/glpi-core:ro \
+#     -v $PWD:/var/www/glpi/plugins/jamfsync -w /var/www/glpi/plugins/jamfsync glpi/glpi:12.0.0 \
+#     /plugins/glpi-core/vendor/bin/phpstan analyse --memory-limit=1G
+# (tools/check.sh does this). glpi-core only provides the phpstan binary.
+includes:
+    # Reports calls to APIs GLPI marks as @deprecated (GLPI 12 removes many of them later).
+    - %rootDir%/../phpstan-deprecation-rules/rules.neon
+
+parameters:
+    level: 5
+    paths:
+        - setup.php
+        - hook.php
+        - front
+        - install
+        - src
+    bootstrapFiles:
+        - tests/phpstan-bootstrap.php
+    tmpDir: .phpstan.cache

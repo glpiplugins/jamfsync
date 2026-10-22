@@ -4,13 +4,11 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 const props = defineProps({
     instances: { type: Array, default: () => [] },
     labels: { type: Object, default: () => ({}) },
-    csrf: { type: String, default: '' },
-    apiUrl: { type: String, default: 'sync.ajax.php' },
+    // Base URL of the SyncController routes, e.g. /plugins/jamfsync/Sync
+    apiBase: { type: String, default: '' },
 });
 
 const l = props.labels;
-
-let csrfToken = props.csrf;
 
 const selectedInstanceId = ref(0);
 const isRunning = ref(false);
@@ -30,7 +28,7 @@ async function safeJsonResponse(response) {
     try {
         return JSON.parse(text);
     } catch (error) {
-        throw new Error((l.invalid_json_response || 'Invalid JSON response.') + ' ' + text.substring(0, 200));
+        throw new Error((l.invalid_json_response || 'Invalid JSON response.') + ' ' + text.substring(0, 200), { cause: error });
     }
 }
 
@@ -42,14 +40,11 @@ function stopPolling() {
 }
 
 async function pollStatus(jobId) {
-    const response = await fetch(props.apiUrl + '?action=status&job_id=' + Number(jobId), {
+    const response = await fetch(props.apiBase + '/Jobs/' + Number(jobId), {
         method: 'GET',
         credentials: 'same-origin',
     });
     const payload = await safeJsonResponse(response);
-    if (payload && payload._glpi_csrf_token) {
-        csrfToken = String(payload._glpi_csrf_token);
-    }
     if (!response.ok || !payload.ok) {
         throw new Error(payload.message || l.unable_load_job_status);
     }
@@ -84,7 +79,7 @@ function startPolling(jobId) {
     tick();
 }
 
-async function start(full, forcedInstanceId = null) {
+async function start(full) {
     if (isRunning.value) {
         return;
     }
@@ -94,15 +89,15 @@ async function start(full, forcedInstanceId = null) {
     job.value = null;
     isRunning.value = true;
 
-    const instanceId = forcedInstanceId !== null ? Number(forcedInstanceId) : Number(selectedInstanceId.value);
+    const instanceId = Number(selectedInstanceId.value);
     const body = new URLSearchParams({
-        action: 'start',
         instance_id: String(instanceId),
         full: full ? '1' : '0',
-        _glpi_csrf_token: csrfToken,
     });
 
-    const response = await fetch(props.apiUrl, {
+    // No CSRF token: GLPI 12 checks the browser's Sec-Fetch-Site/Origin headers,
+    // which a same-origin fetch() sends automatically.
+    const response = await fetch(props.apiBase + '/Start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
         body: body.toString(),
@@ -110,9 +105,6 @@ async function start(full, forcedInstanceId = null) {
     });
 
     const payload = await safeJsonResponse(response);
-    if (payload && payload._glpi_csrf_token) {
-        csrfToken = String(payload._glpi_csrf_token);
-    }
     if (!response.ok || !payload.ok) {
         isRunning.value = false;
         throw new Error(payload.message || l.unable_start_job);
@@ -127,9 +119,9 @@ async function start(full, forcedInstanceId = null) {
     startPolling(jobId);
 }
 
-async function startSafe(full, forcedInstanceId = null) {
+async function startSafe(full) {
     try {
-        await start(full, forcedInstanceId);
+        await start(full);
     } catch (error) {
         errorMessage.value = String(error && error.message ? error.message : error);
         isRunning.value = false;
@@ -137,10 +129,6 @@ async function startSafe(full, forcedInstanceId = null) {
 }
 
 onBeforeUnmount(stopPolling);
-
-// Exposed so the server-rendered per-row "Run" / "Full run" buttons (bound in main.js)
-// can drive the same runner instance.
-defineExpose({ startSafe });
 </script>
 
 <template>

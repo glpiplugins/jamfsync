@@ -1,7 +1,7 @@
-# JAMF Sync - English translations
+# JAMF Sync - French translations
 msgid ""
 msgstr ""
-"Project-Id-Version: JAMF Sync 0.4.0\n"
+"Project-Id-Version: JAMF Sync 1.0.0\n"
 "Language: fr_FR\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -9,11 +9,47 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
 
+msgid "%d days"
+msgstr "%d jours"
+
+msgid "%d device was skipped: its serial number belongs to several computers in GLPI."
+msgid_plural "%d devices were skipped: their serial numbers belong to several computers in GLPI."
+msgstr[0] "%d appareil a été ignoré : son numéro de série appartient à plusieurs ordinateurs dans GLPI."
+msgstr[1] "%d appareils ont été ignorés : leurs numéros de série appartiennent à plusieurs ordinateurs dans GLPI."
+
+msgid "%d devices in JAMF:"
+msgstr "%d appareils dans JAMF :"
+
+msgid "%d existing computer was taken over."
+msgid_plural "%d existing computers were taken over."
+msgstr[0] "%d ordinateur existant a été repris."
+msgstr[1] "%d ordinateurs existants ont été repris."
+
+msgid "%d JAMF request was retried."
+msgid_plural "%d JAMF requests were retried."
+msgstr[0] "%d requête JAMF a été relancée."
+msgstr[1] "%d requêtes JAMF ont été relancées."
+
+msgid "%d s"
+msgstr "%d s"
+
+msgid "A label to recognise this JAMF instance."
+msgstr "Un libellé pour reconnaître cette instance JAMF."
+
+msgid "Aborted by the plugin upgrade to 0.7.0."
+msgstr "Interrompue par la mise à jour du plugin vers la version 0.7.0."
+
 msgid "Active"
 msgstr "Actif"
 
+msgid "Add an instance before running a sync."
+msgstr "Ajoutez une instance avant de lancer une synchronisation."
+
 msgid "Add instance"
 msgstr "Ajouter une instance"
+
+msgid "Advanced"
+msgstr "Avancé"
 
 msgid "After (JSON)"
 msgstr "Après (JSON)"
@@ -21,8 +57,17 @@ msgstr "Après (JSON)"
 msgid "All active instances"
 msgstr "Toutes les instances actives"
 
-msgid "App %s"
-msgstr "App %s"
+msgid "already synced: %d"
+msgstr "déjà synchronisés : %d"
+
+msgid "Also purged"
+msgstr "Également purgé"
+
+msgid "App added"
+msgstr "Application ajoutée"
+
+msgid "App removed"
+msgstr "Application supprimée"
 
 msgid "Apply"
 msgstr "Appliquer"
@@ -30,29 +75,32 @@ msgstr "Appliquer"
 msgid "Apps"
 msgstr "Applications"
 
-msgid "Apps synced (+%1$d/-%2$d)"
-msgstr "Applications synchronisées (+%1$d/-%2$d)"
-
-msgid "Back to configuration"
-msgstr "Retour à la configuration"
-
 msgid "Base URL"
 msgstr "URL de base"
 
 msgid "Before (JSON)"
 msgstr "Avant (JSON)"
 
-msgid "Cancel edit"
-msgstr "Annuler la modification"
+msgid "Change details (days)"
+msgstr "Détails des modifications (jours)"
 
 msgid "Changed"
 msgstr "Modifié"
 
+msgid "Changed devices, apps and OS per sync run, with computer names and before/after values. These may contain personal data (e.g. device names); keep them as short as practical."
+msgstr "Appareils, applications et OS modifiés par exécution, avec noms d'ordinateurs et valeurs avant/après. Ils peuvent contenir des données personnelles (p. ex. noms d'appareils) ; à conserver aussi peu que possible."
+
 msgid "Changed items"
 msgstr "Éléments modifiés"
 
+msgid "Check takeover"
+msgstr "Vérifier la reprise"
+
 msgid "Close details"
 msgstr "Fermer les détails"
+
+msgid "Comparing JAMF with GLPI…"
+msgstr "Comparaison de JAMF avec GLPI…"
 
 msgid "Computer"
 msgstr "Ordinateur"
@@ -66,17 +114,46 @@ msgstr "Source du nom de l'ordinateur"
 msgid "Computer updated"
 msgstr "Ordinateur mis à jour"
 
+msgid "Configure and run JAMF Sync"
+msgstr "Configurer et exécuter JAMF Sync"
+
 msgid "Configured instances"
 msgstr "Instances configurées"
+
+msgid "Connection"
+msgstr "Connexion"
+
+msgid "Connection failed."
+msgstr "Échec de la connexion."
+
+msgid "Connection successful."
+msgstr "Connexion réussie."
+
+msgid "Connection successful: %d device in JAMF."
+msgid_plural "Connection successful: %d devices in JAMF."
+msgstr[0] "Connexion réussie : %d appareil dans JAMF."
+msgstr[1] "Connexion réussie : %d appareils dans JAMF."
+
+msgid "Connection test"
+msgstr "Test de connexion"
+
+msgid "Current name in GLPI"
+msgstr "Nom actuel dans GLPI"
+
+msgid "Cursor"
+msgstr "Curseur"
+
+msgid "Cursor end"
+msgstr "Fin du curseur"
+
+msgid "Cursor start"
+msgstr "Début du curseur"
 
 msgid "Date"
 msgstr "Date"
 
 msgid "Default instance"
 msgstr "Instance par défaut"
-
-msgid "Delete this instance?"
-msgstr "Supprimer cette instance ?"
 
 msgid "Details"
 msgstr "Details"
@@ -87,14 +164,23 @@ msgstr "ID appareil"
 msgid "Devices"
 msgstr "Appareils"
 
+msgid "Devices no longer returned by JAMF"
+msgstr "Appareils que JAMF ne renvoie plus"
+
 msgid "Duration"
 msgstr "Durée"
+
+msgid "Entity for newly imported computers of this instance, applied through the managed entity rule."
+msgstr "Entité des ordinateurs nouvellement importés de cette instance, appliquée par la règle d'entité gérée."
 
 msgid "Entity ID"
 msgstr "ID entité"
 
 msgid "Error"
 msgstr "Erreur"
+
+msgid "Existing computers that the next sync takes over (matched by serial number). Their name, model, OS and software are then maintained from JAMF."
+msgstr "Ordinateurs existants que la prochaine synchronisation reprend (par numéro de série). Leur nom, modèle, OS et logiciels sont ensuite maintenus depuis JAMF."
 
 msgid "Export CSV"
 msgstr "Exporter CSV"
@@ -105,20 +191,26 @@ msgstr "Filtre"
 msgid "Finished"
 msgstr "Terminé"
 
+msgid "Finished sync jobs are deleted after %d days."
+msgstr "Les tâches de synchronisation terminées sont supprimées après %d jours."
+
+msgid "forever"
+msgstr "sans limite"
+
 msgid "From"
 msgstr "De"
 
-msgid "Full resync update"
-msgstr "Mise à jour de resynchronisation complète"
-
-msgid "Full run"
-msgstr "Exécution complète"
+msgid "Full sync"
+msgstr "Synchronisation complète"
 
 msgid "Impacted devices"
 msgstr "Appareils impactés"
 
 msgid "Instance"
 msgstr "Instance"
+
+msgid "Instance ID"
+msgstr "ID instance"
 
 msgid "Instance name"
 msgstr "Nom de l'instance"
@@ -129,26 +221,26 @@ msgstr "Le nom de l'instance est requis."
 msgid "Instances"
 msgstr "Instances"
 
-msgid "Invalid JSON response from sync.ajax.php."
-msgstr "Réponse JSON invalide de sync.ajax.php."
-
 msgid "Invalid job ID."
 msgstr "ID de tâche invalide."
+
+msgid "Invalid JSON response from the server."
+msgstr "Réponse JSON invalide du serveur."
+
+msgid "Inventory import failed: %s"
+msgstr "Échec de l'import d'inventaire : %s"
+
+msgid "Inventory tag"
+msgstr "Étiquette d'inventaire"
+
+msgid "It starts with the next run of the automatic action ProcessSyncQueue (usually within a minute)."
+msgstr "Elle démarre à la prochaine exécution de l'action automatique ProcessSyncQueue (généralement en moins d'une minute)."
 
 msgid "JAMF API key"
 msgstr "Clé API JAMF"
 
 msgid "JAMF API username (Network ID)"
 msgstr "Nom d'utilisateur API JAMF (Network ID)"
-
-msgid "JAMF Sync"
-msgstr "JAMF Sync"
-
-msgid "JAMF Sync Monitoring"
-msgstr "Supervision JAMF Sync"
-
-msgid "JAMF Sync run change"
-msgstr "Changement d'exécution JAMF Sync"
 
 msgid "JAMF asset tag"
 msgstr "Tag d'actif JAMF"
@@ -165,14 +257,16 @@ msgstr "Les identifiants JAMF sont requis."
 msgid "JAMF device name"
 msgstr "Nom d'appareil JAMF"
 
+msgid "JAMF instance"
+msgid_plural "JAMF instances"
+msgstr[0] "Instance JAMF"
+msgstr[1] "Instances JAMF"
+
 msgid "JAMF instance deleted."
 msgstr "Instance JAMF supprimée."
 
 msgid "JAMF instance saved (#%d)."
 msgstr "Instance JAMF enregistrée (#%d)."
-
-msgid "JAMF instance table does not exist. Reinstall plugin."
-msgstr "La table des instances JAMF n'existe pas. Réinstallez le plugin."
 
 msgid "JAMF instances"
 msgstr "Instances JAMF"
@@ -183,14 +277,28 @@ msgstr "Récupération JAMF terminée pour %d instance(s)."
 msgid "JAMF pull completed."
 msgstr "Récupération JAMF terminée."
 
-msgid "JAMF pull completed. Devices: %d, apps: %d"
-msgstr "Récupération JAMF terminée. Appareils : %d, applications : %d"
-
-msgid "JAMF pull failed"
-msgstr "Échec de la récupération JAMF"
-
 msgid "JAMF pull finished with errors (%d failed instance(s))."
 msgstr "Récupération JAMF terminée avec erreurs (%d instance(s) en échec)."
+
+msgid "JAMF Sync"
+msgstr "JAMF Sync"
+
+msgid "JAMF Sync data retention"
+msgstr "Conservation des données JAMF Sync"
+
+msgid "JAMF Sync Monitoring"
+msgstr "Supervision JAMF Sync"
+
+msgid "JAMF sync run"
+msgid_plural "JAMF sync runs"
+msgstr[0] "Exécution de synchronisation JAMF"
+msgstr[1] "Exécutions de synchronisation JAMF"
+
+msgid "JAMF Sync run change"
+msgstr "Changement d'exécution JAMF Sync"
+
+msgid "JAMF Sync runner"
+msgstr "Exécuteur JAMF Sync"
 
 msgid "Job not found."
 msgstr "Tâche introuvable."
@@ -198,17 +306,59 @@ msgstr "Tâche introuvable."
 msgid "Job queued"
 msgstr "Tâche en file d'attente"
 
+msgid "Kept: runs %1$s, change details %2$s"
+msgstr "Conservation : exécutions %1$s, détails des modifications %2$s"
+
+msgid "Last check-in"
+msgstr "Dernier check-in"
+
+msgid "Last seen in JAMF"
+msgstr "Vu pour la dernière fois dans JAMF"
+
 msgid "Last success"
 msgstr "Dernier succès"
+
+msgid "Last successful run"
+msgstr "Dernière exécution réussie"
 
 msgid "Leave blank to keep existing key"
 msgstr "Laisser vide pour conserver la clé existante"
 
+msgid "Leave blank to keep the existing key."
+msgstr "Laisser vide pour conserver la clé existante."
+
+msgid "Limit"
+msgstr "Limite"
+
+msgid "Lists show at most 100 entries each."
+msgstr "Les listes affichent au plus 100 entrées chacune."
+
+msgid "Maintain a GLPI entity rule \"inventory tag of this instance → target entity\". Turn off to use your own entity rules."
+msgstr "Gère une règle d'entité GLPI « étiquette d'inventaire de cette instance → entité cible ». Désactivez pour utiliser vos propres règles d'entité."
+
+msgid "Manage entity rule"
+msgstr "Gérer la règle d'entité"
+
+msgid "Managed by the JAMF Sync plugin from the instance settings; changes here are overwritten when the instance is saved."
+msgstr "Géré par le plugin JAMF Sync à partir des paramètres de l'instance ; les modifications faites ici sont écrasées lors de l'enregistrement de l'instance."
+
+msgid "Managed by the JAMF Sync plugin: matches the devices of this instance by serial number only, so devices that share a name in JAMF are not merged."
+msgstr "Géré par le plugin JAMF Sync : associe les appareils de cette instance uniquement par numéro de série, afin que des appareils portant le même nom dans JAMF ne soient pas fusionnés."
+
+msgid "Manual"
+msgstr "Manuel"
+
+msgid "Manual (full resync)"
+msgstr "Manuel (resynchronisation complète)"
+
+msgid "Mapped devices that the last successful run of their instance did not receive from JAMF (retired, deleted or moved to another JAMF instance). GLPI keeps the computers; nothing is deleted automatically."
+msgstr "Appareils associés que la dernière exécution réussie de leur instance n'a plus reçus de JAMF (retirés, supprimés ou déplacés vers une autre instance JAMF). GLPI conserve les ordinateurs ; rien n'est supprimé automatiquement."
+
+msgid "Mappings of devices not seen in JAMF (days)"
+msgstr "Associations des appareils absents de JAMF (jours)"
+
 msgid "Message"
 msgstr "Message"
-
-msgid "Missing job ID."
-msgstr "ID de tâche manquant."
 
 msgid "Mode"
 msgstr "Mode"
@@ -216,17 +366,26 @@ msgstr "Mode"
 msgid "Monitoring"
 msgstr "Supervision"
 
+msgid "Monitoring history: instance, counts and messages per run. Deleting a run also deletes its change details."
+msgstr "Historique du suivi : instance, compteurs et message par exécution. La suppression d'une exécution supprime aussi ses détails de modification."
+
 msgid "Name"
 msgstr "Name"
+
+msgid "Name from JAMF"
+msgstr "Nom depuis JAMF"
 
 msgid "Name source"
 msgstr "Source du nom"
 
-msgid "No JAMF instances configured yet."
-msgstr "Aucune instance JAMF configurée."
+msgid "new: %d"
+msgstr "nouveaux : %d"
 
 msgid "No active JAMF instance configured."
 msgstr "Aucune instance JAMF active configurée."
+
+msgid "No JAMF instances configured yet."
+msgstr "Aucune instance JAMF configurée."
 
 msgid "No matching active JAMF instance configured."
 msgstr "Aucune instance JAMF active correspondante configurée."
@@ -234,20 +393,26 @@ msgstr "Aucune instance JAMF active correspondante configurée."
 msgid "No sync runs found for current filter."
 msgstr "Aucune exécution trouvée pour ce filtre."
 
+msgid "Not registered"
+msgstr "Non enregistrée"
+
+msgid "Object"
+msgstr "Objet"
+
 msgid "OS"
 msgstr "OS"
 
 msgid "OS changed"
 msgstr "OS modifié"
 
-msgid "OS updated"
-msgstr "OS mis à jour"
-
-msgid "Object"
-msgstr "Objet"
-
 msgid "Page size"
 msgstr "Taille de page"
+
+msgid "Periods in days; 0 keeps the data forever. The automatic action below deletes older entries once a day."
+msgstr "Durées en jours ; 0 conserve les données sans limite. L'action automatique ci-dessous supprime les entrées plus anciennes une fois par jour."
+
+msgid "Process queued JAMF sync jobs"
+msgstr "Traiter les tâches de synchronisation JAMF en attente"
 
 msgid "Processed"
 msgstr "Traité"
@@ -264,23 +429,29 @@ msgstr "Récupérer les appareils"
 msgid "Pull devices and apps from JAMF"
 msgstr "Récupérer les appareils et applications depuis JAMF"
 
+msgid "Purge JAMF Sync history older than the retention periods"
+msgstr "Purger l'historique JAMF Sync plus ancien que les durées de conservation"
+
+msgid "Re-encrypt stored API keys with the current GLPI crypt key."
+msgstr "Rechiffrer les clés d'API stockées avec la clé de chiffrement GLPI actuelle."
+
 msgid "Re-encrypted API keys: %d"
 msgstr "Clés API rechiffrées : %d"
 
 msgid "Recent sync runs"
 msgstr "Exécutions récentes"
 
+msgid "Removes the JAMF device mapping of devices that no sync has received for that long. GLPI keeps the computers; a device that comes back is mapped again."
+msgstr "Supprime l'association JAMF des appareils qu'aucune synchronisation n'a reçus depuis cette durée. GLPI conserve les ordinateurs ; un appareil qui revient est de nouveau associé."
+
 msgid "Request timeout (sec)"
 msgstr "Délai d'expiration (sec)"
 
+msgid "Retention periods saved."
+msgstr "Durées de conservation enregistrées."
+
 msgid "Rotate API key encryption"
 msgstr "Faire tourner le chiffrement des clés API"
-
-msgid "Run"
-msgstr "Exécuter"
-
-msgid "Run ID"
-msgstr "ID d'exécution"
 
 msgid "Run details"
 msgstr "Détails de l'exécution"
@@ -288,11 +459,35 @@ msgstr "Détails de l'exécution"
 msgid "Run full resync"
 msgstr "Lancer une resynchronisation complète"
 
+msgid "Run ID"
+msgstr "ID d'exécution"
+
 msgid "Run pull now"
 msgstr "Lancer la récupération"
 
 msgid "Runs"
 msgstr "Exécutions"
+
+msgid "Scheduled"
+msgstr "Planifié"
+
+msgid "Scheduled sync failed"
+msgstr "Échec de la synchronisation planifiée"
+
+msgid "Sent with every device as inventory tag. Leave blank for the default:"
+msgstr "Envoyée avec chaque appareil comme étiquette d'inventaire. Laisser vide pour la valeur par défaut :"
+
+msgid "Several GLPI computers share these serial numbers. These devices are skipped until the duplicates are merged or deleted."
+msgstr "Plusieurs ordinateurs GLPI partagent ces numéros de série. Ces appareils sont ignorés jusqu'à ce que les doublons soient fusionnés ou supprimés."
+
+msgid "Showing the first %d entries."
+msgstr "Affichage des %d premières entrées."
+
+msgid "Shows which existing GLPI computers the next sync takes over by serial number and which devices it creates. Uses the saved settings and changes nothing."
+msgstr "Indique quels ordinateurs GLPI existants la prochaine synchronisation reprend par numéro de série et quels appareils elle crée. Utilise les paramètres enregistrés et ne modifie rien."
+
+msgid "skipped, serial number not unique: %d"
+msgstr "ignorés, numéro de série non unique : %d"
 
 msgid "Started"
 msgstr "Démarré"
@@ -306,11 +501,20 @@ msgstr "Synchronisation terminée."
 msgid "Sync failed."
 msgstr "Échec de la synchronisation."
 
-msgid "Sync job appears stalled (no progress heartbeat)."
-msgstr "La tâche semble bloquée (pas de progression)."
+msgid "Sync queued"
+msgstr "Synchronisation en file d'attente"
 
 msgid "Sync runner"
 msgstr "Exécuteur de synchronisation"
+
+msgid "Sync running"
+msgstr "Synchronisation en cours"
+
+msgid "Sync runs (days)"
+msgstr "Exécutions de synchronisation (jours)"
+
+msgid "Sync scope"
+msgstr "Portée de la synchronisation"
 
 msgid "Sync stalled."
 msgstr "Synchronisation bloquée."
@@ -318,8 +522,29 @@ msgstr "Synchronisation bloquée."
 msgid "Sync started"
 msgstr "Synchronisation démarrée"
 
+msgid "taken over: %d"
+msgstr "repris : %d"
+
+msgid "Takeover check"
+msgstr "Vérification de reprise"
+
 msgid "Target entity"
 msgstr "Entité cible"
+
+msgid "Test connection"
+msgstr "Tester la connexion"
+
+msgid "Testing connection…"
+msgstr "Test de la connexion…"
+
+msgid "The check failed."
+msgstr "La vérification a échoué."
+
+msgid "The computers and their history in GLPI follow the \"Historical logs\" settings of this page."
+msgstr "Les ordinateurs et leur historique dans GLPI suivent les paramètres « Journaux historiques » de cette page."
+
+msgid "The sync worker stopped unexpectedly; the job was aborted."
+msgstr "Le processus de synchronisation s'est arrêté de manière inattendue ; la tâche a été interrompue."
 
 msgid "To"
 msgstr "À"
@@ -339,14 +564,8 @@ msgstr "Impossible de charger le statut de la tâche."
 msgid "Unable to start job."
 msgstr "Impossible de démarrer la tâche."
 
-msgid "Unknown"
-msgstr "Inconnu"
-
-msgid "Unsupported action."
-msgstr "Action non prise en charge."
-
-msgid "Update instance"
-msgstr "Mettre à jour l'instance"
+msgid "Uses the values entered above; with a blank API key the stored key is used."
+msgstr "Utilise les valeurs saisies ci-dessus ; si la clé API est vide, la clé enregistrée est utilisée."
 
 msgid "Verify TLS"
 msgstr "Vérifier TLS"
@@ -354,50 +573,5 @@ msgstr "Vérifier TLS"
 msgid "View"
 msgstr "Voir"
 
-
-msgid "Connection"
-msgstr "Connexion"
-
-msgid "Sync scope"
-msgstr "Portée de la synchronisation"
-
-msgid "Advanced"
-msgstr "Avancé"
-
-msgid "Never"
-msgstr "Jamais"
-
-msgid "Add JAMF instance"
-msgstr "Ajouter une instance JAMF"
-
-msgid "Edit instance"
-msgstr "Modifier l'instance"
-
-msgid "Back to instances"
-msgstr "Retour aux instances"
-
-msgid "JAMF Sync runner"
-msgstr "Exécuteur JAMF Sync"
-
-msgid "Configure and run JAMF Sync"
-msgstr "Configurer et exécuter JAMF Sync"
-
-msgid "A label to recognise this JAMF instance."
-msgstr "Un libellé pour reconnaître cette instance JAMF."
-
-msgid "Leave blank to keep the existing key."
-msgstr "Laisser vide pour conserver la clé existante."
-
-msgid "Add your first instance to start syncing devices and apps from JAMF."
-msgstr "Ajoutez votre première instance pour synchroniser les appareils et les applications depuis JAMF."
-
-msgid "Add an instance before running a sync."
-msgstr "Ajoutez une instance avant de lancer une synchronisation."
-
-msgid "Re-encrypt stored API keys with the current GLPI crypt key."
-msgstr "Rechiffrer les clés d'API stockées avec la clé de chiffrement GLPI actuelle."
-
-msgid "JAMF instance"
-msgid_plural "JAMF instances"
-msgstr[0] "Instance JAMF"
-msgstr[1] "Instances JAMF"
+msgid "without serial number: %d"
+msgstr "sans numéro de série : %d"

@@ -2,14 +2,13 @@
 
 declare(strict_types=1);
 
+use Glpi\Exception\Http\AccessDeniedHttpException;
 use GlpiPlugin\Jamfsync\Access;
 use GlpiPlugin\Jamfsync\InstanceRepository;
 use GlpiPlugin\Jamfsync\Ui\ConfigMenu;
 
-include_once __DIR__ . '/../../../inc/includes.php';
-
 if (!Access::canRun()) {
-    Html::displayRightError();
+    throw new AccessDeniedHttpException();
 }
 
 $repository = new InstanceRepository();
@@ -40,7 +39,7 @@ $runnerLabels = [
     'sync_completed' => __('Sync completed.', 'jamfsync'),
     'sync_failed' => __('Sync failed.', 'jamfsync'),
     'sync_stalled' => __('Sync stalled.', 'jamfsync'),
-    'invalid_json_response' => __('Invalid JSON response from sync.ajax.php.', 'jamfsync'),
+    'invalid_json_response' => __('Invalid JSON response from the server.', 'jamfsync'),
 ];
 
 Html::header(__('JAMF Sync runner', 'jamfsync'), '', 'config', 'plugins');
@@ -67,7 +66,7 @@ if ($runnerInstances === []) {
     echo "<div id='jamfsync-runner-app'"
         . " data-instances='" . htmlescape(json_encode($runnerInstances, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . "'"
         . " data-labels='" . htmlescape(json_encode($runnerLabels, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) . "'"
-        . " data-csrf='" . htmlescape(Session::getNewCSRFToken()) . "'></div>";
+        . " data-api-base='" . htmlescape(ConfigMenu::syncApiBase()) . "'></div>";
 }
 
 ConfigMenu::close();

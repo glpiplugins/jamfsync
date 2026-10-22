@@ -11,7 +11,7 @@ use Session;
 
 class ProfileTab extends CommonGLPI
 {
-    public static $rightname = 'profile';
+    public static string $rightname = 'profile';
 
     public static function getTypeName($nb = 0): string
     {
@@ -46,7 +46,6 @@ class ProfileTab extends CommonGLPI
         if ($can_edit) {
             echo "<form method='post' action='" . htmlescape(Profile::getFormURL()) . "' data-track-changes='true'>";
             echo Html::hidden('id', ['value' => (int) $item->getID()]);
-            echo Html::hidden('_glpi_csrf_token', ['value' => Session::getNewCSRFToken()]);
         }
 
         echo "<div><div class='card-body p-0'>";

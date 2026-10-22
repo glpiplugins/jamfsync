@@ -2,10 +2,19 @@
 
 declare(strict_types=1);
 
+use Glpi\Cache\CacheManager;
+use Glpi\Config\DataAndPrivacyConfig;
 use Glpi\Plugin\Hooks;
 use GlpiPlugin\Jamfsync\Access;
 use GlpiPlugin\Jamfsync\Instance;
+use GlpiPlugin\Jamfsync\NotificationTargetSyncRun;
 use GlpiPlugin\Jamfsync\ProfileTab;
+use GlpiPlugin\Jamfsync\Service\EntityRuleManager;
+use GlpiPlugin\Jamfsync\Service\ImportRuleManager;
+use GlpiPlugin\Jamfsync\Service\RetentionPolicy;
+use GlpiPlugin\Jamfsync\SyncRun;
+use GlpiPlugin\Jamfsync\SyncTask;
+use GlpiPlugin\Jamfsync\Ui\PrivacyTab;
 
 if (!defined('GLPI_ROOT')) {
     die("Sorry. You can't access this file directly");
@@ -13,7 +22,7 @@ if (!defined('GLPI_ROOT')) {
 
 require_once __DIR__ . '/hook.php';
 
-define('PLUGIN_JAMFSYNC_VERSION', '0.5.1');
+define('PLUGIN_JAMFSYNC_VERSION', '1.0.0');
 
 function plugin_version_jamfsync(): array
 {
@@ -25,8 +34,8 @@ function plugin_version_jamfsync(): array
         'homepage'     => 'https://github.com/glpiplugins/jamfsync',
         'requirements' => [
             'glpi' => [
-                'min' => '11.0.0',
-                'max' => '11.99.99',
+                'min' => '12.0.0',
+                'max' => '12.0.99',
             ],
         ],
     ];
@@ -36,12 +45,12 @@ function plugin_init_jamfsync(): void
 {
     global $PLUGIN_HOOKS;
 
-    plugin_jamfsync_register_autoloader();
-
-    $PLUGIN_HOOKS['csrf_compliant']['jamfsync'] = true;
+    // Classes under src/ are autoloaded by GLPI (PSR-4, GlpiPlugin\Jamfsync\).
+    // No csrf_compliant hook and no DB work here: GLPI 12 validates CSRF via the
+    // Sec-Fetch-Site/Origin headers, and the profile right + cron tasks are registered
+    // by plugin_jamfsync_install() only. (Re-registering the cron on every request used
+    // to reset its state to "waiting", overriding a disabled or errored task.)
     $PLUGIN_HOOKS['config_page']['jamfsync'] = 'front/config.form.php';
-
-    Access::ensureProfileRightDefinition();
 
     Plugin::registerClass(ProfileTab::class, [
         'addtabon' => [Profile::class],
@@ -51,13 +60,18 @@ function plugin_init_jamfsync(): void
     // (front/config.form.php via Search::showList).
     Plugin::registerClass(Instance::class);
 
+    // Item type of the "Scheduled sync failed" notification (Setup > Notifications).
+    Plugin::registerClass(SyncRun::class, ['notificationtemplates_types' => true]);
+
+    // Retention periods on Setup > Data and Privacy.
+    Plugin::registerClass(PrivacyTab::class, ['addtabon' => [DataAndPrivacyConfig::class]]);
+
     // Sync runner UI: a Vue component that reuses GLPI's own Vue runtime (window._vue).
     // The bundle is a footer JS module so it loads after core's build/vue/app.js; it
     // no-ops on every page that lacks the #jamfsync-runner-app mount node.
-    $PLUGIN_HOOKS['add_css']['jamfsync'][] = 'public/js/dist/jamfsync-vue.css';
-    $PLUGIN_HOOKS[Hooks::ADD_JAVASCRIPT_MODULE]['jamfsync'][] = 'public/js/dist/jamfsync-vue.js';
-
-    plugin_jamfsync_register_cron();
+    // Paths are relative to public/ (GLPI serves /plugins/jamfsync/* from there).
+    $PLUGIN_HOOKS['add_css']['jamfsync'][] = 'js/dist/jamfsync-vue.css';
+    $PLUGIN_HOOKS[Hooks::ADD_JAVASCRIPT_MODULE]['jamfsync'][] = 'js/dist/jamfsync-vue.js';
 }
 
 function plugin_jamfsync_check_prerequisites(): bool
@@ -82,6 +96,9 @@ function plugin_jamfsync_install(): bool
     ]);
     Access::ensureProfileRightDefinition();
     plugin_jamfsync_register_cron();
+    plugin_jamfsync_install_notification();
+    RetentionPolicy::installDefaults();
+    plugin_jamfsync_sync_import_rules();
 
     return true;
 }
@@ -90,7 +107,8 @@ function plugin_jamfsync_apply_schema_migrations(Migration $migration): string
 {
     global $DB;
 
-    $current = (string) Config::getConfigurationValue('plugin:jamfsync', 'schema_version', '0.0.0');
+    // getConfigurationValue() has no default parameter; null means "never installed".
+    $current = (string) (Config::getConfigurationValue('plugin:jamfsync', 'schema_version') ?? '0.0.0');
 
     // Safety net: if the base table is missing (e.g. schema_version left stale by a
     // previous failed/partial uninstall), force a from-scratch run so the table-creating
@@ -134,12 +152,44 @@ function plugin_jamfsync_get_schema_migrations(): array
         '0.3.7' => __DIR__ . '/install/migrations/0002_0.3.7.php',
         '0.3.8' => __DIR__ . '/install/migrations/0003_0.3.8.php',
         '0.5.0' => __DIR__ . '/install/migrations/0004_0.5.0.php',
+        '0.7.0' => __DIR__ . '/install/migrations/0005_0.7.0.php',
+        '0.8.0' => __DIR__ . '/install/migrations/0006_0.8.0.php',
+        '0.9.0' => __DIR__ . '/install/migrations/0007_0.9.0.php',
     ];
+}
+
+/**
+ * GLPI resets compiled Twig templates on (de)activation, but in production mode not the
+ * Symfony route cache: the plugin's controller routes (/plugins/jamfsync/Sync/...) would stay
+ * unknown (HTTP 404) when that cache was built while the plugin was inactive.
+ */
+function plugin_jamfsync_activate(): void
+{
+    (new CacheManager())->resetAllCaches();
+}
+
+function plugin_jamfsync_deactivate(): void
+{
+    (new CacheManager())->resetAllCaches();
 }
 
 function plugin_jamfsync_uninstall(): bool
 {
     global $DB;
+
+    // Managed entity rules first: their ids live in the instances table dropped below.
+    if ($DB->tableExists('glpi_plugin_jamfsync_instances') && $DB->fieldExists('glpi_plugin_jamfsync_instances', 'rules_id')) {
+        $rules = new EntityRuleManager();
+        foreach ($DB->request(['SELECT' => ['rules_id'], 'FROM' => 'glpi_plugin_jamfsync_instances']) as $row) {
+            $rules->remove((int) $row['rules_id']);
+        }
+    }
+
+    // Import rules are found by uuid, so orphans of already deleted instances go as well.
+    (new RuleImportAsset())->deleteByCriteria(['uuid' => ['LIKE', 'jamfsync-%-import-%']], true);
+
+    (new Notification())->deleteByCriteria(['itemtype' => SyncRun::class], true);
+    (new NotificationTemplate())->deleteByCriteria(['itemtype' => SyncRun::class], true);
 
     foreach ([
         'glpi_plugin_jamfsync_syncruns',
@@ -159,7 +209,10 @@ function plugin_jamfsync_uninstall(): bool
         // skips the table-creating migrations.
         Config::deleteConfigurationValues('plugin:jamfsync', $configNames);
     }
-    CronTask::unregister('PluginJamfsyncSyncTask');
+    // unregister() expects the plugin key; it matches both 'Pluginjamfsync%' and
+    // 'GlpiPlugin\jamfsync\%' itemtypes (case-insensitive).
+    CronTask::unregister('jamfsync');
+    Access::deleteProfileRightDefinition();
 
     return true;
 }
@@ -211,69 +264,96 @@ function plugin_jamfsync_migrate_legacy_settings(): void
     ]);
 }
 
+/**
+ * Create the automatic actions when they are missing. Existing tasks are left alone so an
+ * administrator's frequency, run mode or "disabled" choice survives plugin upgrades.
+ */
 function plugin_jamfsync_register_cron(): void
 {
-    $frequency = 3600;
-    $task = new CronTask();
+    $frequencies = [
+        SyncTask::TASK_PULL  => HOUR_TIMESTAMP,
+        SyncTask::TASK_QUEUE => MINUTE_TIMESTAMP,
+        SyncTask::TASK_PURGE => DAY_TIMESTAMP,
+    ];
 
-    if ($task->getFromDBbyName(PluginJamfsyncSyncTask::class, 'PullFromJamf')) {
-        $update = [];
-
-        if ((int) $task->fields['frequency'] !== $frequency) {
-            $update['frequency'] = $frequency;
-        }
-
-        if (($task->fields['state'] ?? '') !== CronTask::STATE_WAITING) {
-            $update['state'] = CronTask::STATE_WAITING;
-        }
-
-        if ($update !== []) {
-            $task->update($update);
-        }
-
-        return;
-    }
-
-    CronTask::register(
-        PluginJamfsyncSyncTask::class,
-        'PullFromJamf',
-        $frequency,
-        [
+    foreach ($frequencies as $name => $frequency) {
+        CronTask::register(SyncTask::class, $name, $frequency, [
             'state'   => CronTask::STATE_WAITING,
-            'comment' => __('Pull devices and apps from JAMF', 'jamfsync'),
-        ]
-    );
+            'comment' => SyncTask::cronInfo($name)['description'] ?? '',
+        ]);
+    }
 }
 
-function plugin_jamfsync_register_autoloader(): void
+/**
+ * Default notification "JAMF Sync: scheduled sync failed" (to the GLPI administrator
+ * address), created once; administrators can change or disable it afterwards.
+ */
+function plugin_jamfsync_install_notification(): void
 {
-    static $registered = false;
-    if ($registered) {
+    if (countElementsInTable(Notification::getTable(), ['itemtype' => SyncRun::class]) > 0) {
         return;
     }
 
-    spl_autoload_register(static function (string $class): void {
-        $legacy = [
-            'PluginJamfsyncSyncTask' => __DIR__ . '/src/PluginJamfsyncSyncTask.php',
-        ];
+    $templatesId = (int) (new NotificationTemplate())->add([
+        'name' => 'JAMF Sync: ' . __('Scheduled sync failed', 'jamfsync'),
+        'itemtype' => SyncRun::class,
+    ]);
+    if ($templatesId <= 0) {
+        return;
+    }
 
-        if (isset($legacy[$class]) && is_file($legacy[$class])) {
-            require_once $legacy[$class];
-            return;
-        }
+    (new NotificationTemplateTranslation())->add([
+        'notificationtemplates_id' => $templatesId,
+        'language' => '',
+        'subject' => '##jamfsync.action##: ##jamfsync.instance##',
+        'content_text' => "##lang.jamfsync.instance##: ##jamfsync.instance##\n"
+            . "##lang.jamfsync.started##: ##jamfsync.started##\n"
+            . "##lang.jamfsync.message##: ##jamfsync.message##\n\n"
+            . "##jamfsync.url##",
+        'content_html' => '<p>##lang.jamfsync.instance##: ##jamfsync.instance##<br>'
+            . '##lang.jamfsync.started##: ##jamfsync.started##<br>'
+            . '##lang.jamfsync.message##: ##jamfsync.message##</p>'
+            . '<p><a href="##jamfsync.url##">##jamfsync.url##</a></p>',
+    ]);
 
-        $prefix = 'GlpiPlugin\\Jamfsync\\';
-        if (strpos($class, $prefix) !== 0) {
-            return;
-        }
+    $notificationsId = (int) (new Notification())->add([
+        'name' => 'JAMF Sync: ' . __('Scheduled sync failed', 'jamfsync'),
+        'entities_id' => 0,
+        'is_recursive' => 1,
+        'is_active' => 1,
+        'itemtype' => SyncRun::class,
+        'event' => NotificationTargetSyncRun::EVENT_FAILED,
+    ]);
+    if ($notificationsId <= 0) {
+        return;
+    }
 
-        $relative = substr($class, strlen($prefix));
-        $path = __DIR__ . '/src/' . str_replace('\\', '/', $relative) . '.php';
+    (new Notification_NotificationTemplate())->add([
+        'notifications_id' => $notificationsId,
+        'mode' => Notification_NotificationTemplate::MODE_MAIL,
+        'notificationtemplates_id' => $templatesId,
+    ]);
+    (new NotificationTarget())->add([
+        'notifications_id' => $notificationsId,
+        'type' => Notification::USER_TYPE,
+        'items_id' => Notification::GLOBAL_ADMINISTRATOR,
+    ]);
+}
 
-        if (is_file($path)) {
-            require_once $path;
-        }
-    });
+/**
+ * Create or refresh the managed asset import rules of every instance (install and upgrade),
+ * see ImportRuleManager.
+ */
+function plugin_jamfsync_sync_import_rules(): void
+{
+    global $DB;
 
-    $registered = true;
+    if (!$DB->tableExists('glpi_plugin_jamfsync_instances')) {
+        return;
+    }
+
+    $rules = new ImportRuleManager();
+    foreach ($DB->request(['FROM' => 'glpi_plugin_jamfsync_instances']) as $instance) {
+        $rules->sync($instance);
+    }
 }

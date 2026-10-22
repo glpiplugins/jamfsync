@@ -2,15 +2,14 @@
 
 declare(strict_types=1);
 
+use Glpi\Exception\Http\AccessDeniedHttpException;
 use GlpiPlugin\Jamfsync\Access;
 use GlpiPlugin\Jamfsync\Instance;
 use GlpiPlugin\Jamfsync\InstanceRepository;
 use GlpiPlugin\Jamfsync\Ui\ConfigMenu;
 
-include_once __DIR__ . '/../../../inc/includes.php';
-
 if (!Access::canView()) {
-    Html::displayRightError();
+    throw new AccessDeniedHttpException();
 }
 
 $repository = new InstanceRepository();
@@ -18,7 +17,7 @@ $canConfig = Access::canConfig();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canConfig) {
-        Html::displayRightError();
+        throw new AccessDeniedHttpException();
     }
 
     $action = (string) ($_POST['action'] ?? '');
@@ -49,7 +48,6 @@ echo "<h3 class='card-title d-flex align-items-center gap-2 mb-0'><i class='ti t
 if ($canConfig) {
     echo "<div class='btn-list ms-auto'>";
     echo "<form method='post' class='mb-0'>";
-    echo Html::hidden('_glpi_csrf_token', ['value' => Session::getNewCSRFToken()]);
     echo Html::hidden('action', ['value' => 'rotate_api_key_encryption']);
     echo "<button type='submit' class='btn btn-sm btn-outline-secondary' title='" . htmlescape(__('Re-encrypt stored API keys with the current GLPI crypt key.', 'jamfsync')) . "'><i class='ti ti-shield-lock me-1'></i>" . htmlescape(__('Rotate API key encryption', 'jamfsync')) . "</button>";
     echo "</form>";

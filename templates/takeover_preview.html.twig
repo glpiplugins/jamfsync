@@ -1,0 +1,62 @@
+{#
+ # JAMF Sync — result of "Check takeover" (InstanceController::takeoverPreview()).
+ # Shown below the button on the instance form; all values are escaped by Twig.
+ #}
+<div class="mt-2">
+    <p class="mb-2">
+        {{ __('%d devices in JAMF:', 'jamfsync')|format(preview.total) }}
+        <span class="badge bg-secondary-lt">{{ __('already synced: %d', 'jamfsync')|format(preview.counts.synced) }}</span>
+        <span class="badge bg-info-lt">{{ __('taken over: %d', 'jamfsync')|format(preview.counts.adopt) }}</span>
+        <span class="badge bg-success-lt">{{ __('new: %d', 'jamfsync')|format(preview.counts.new) }}</span>
+        {% if preview.counts.ambiguous > 0 %}
+            <span class="badge bg-danger-lt">{{ __('skipped, serial number not unique: %d', 'jamfsync')|format(preview.counts.ambiguous) }}</span>
+        {% endif %}
+        {% if preview.counts.no_serial > 0 %}
+            <span class="badge bg-warning-lt">{{ __('without serial number: %d', 'jamfsync')|format(preview.counts.no_serial) }}</span>
+        {% endif %}
+    </p>
+
+    {% if preview.adopt is not empty %}
+        <p class="small text-muted mb-1">{{ __('Existing computers that the next sync takes over (matched by serial number). Their name, model, OS and software are then maintained from JAMF.', 'jamfsync') }}</p>
+        <div class="table-responsive mb-2">
+            <table class="table table-sm table-striped mb-0">
+                <thead>
+                    <tr>
+                        <th>{{ __('Serial number') }}</th>
+                        <th>{{ __('Current name in GLPI', 'jamfsync') }}</th>
+                        <th>{{ __('Name from JAMF', 'jamfsync') }}</th>
+                        <th>{{ __('Entity') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in preview.adopt %}
+                        <tr>
+                            <td>{{ row.serial }}</td>
+                            <td><a href="{{ row.url }}">{{ row.glpi_name ?: '—' }}</a></td>
+                            <td>{{ row.jamf_name }}</td>
+                            <td>{{ row.entity }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+
+    {% if preview.ambiguous is not empty %}
+        <p class="small text-danger mb-1">{{ __('Several GLPI computers share these serial numbers. These devices are skipped until the duplicates are merged or deleted.', 'jamfsync') }}</p>
+        <ul class="small mb-2">
+            {% for row in preview.ambiguous %}
+                <li>
+                    {{ row.serial }} ({{ row.jamf_name }}):
+                    {% for computer in row.computers %}
+                        <a href="{{ computer.url }}">{{ computer.name ?: '—' }}</a>{{ not loop.last ? ', ' : '' }}
+                    {% endfor %}
+                </li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+
+    {% if preview.adopt|length < preview.counts.adopt or preview.ambiguous|length < preview.counts.ambiguous %}
+        <p class="small text-muted mb-0">{{ __('Lists show at most 100 entries each.', 'jamfsync') }}</p>
+    {% endif %}
+</div>

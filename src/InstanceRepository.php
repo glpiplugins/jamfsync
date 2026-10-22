@@ -55,7 +55,7 @@ class InstanceRepository
         return $rows;
     }
 
-    public function getById(int $id): ?array
+    public function getById(int $id, bool $includeSecrets = false): ?array
     {
         global $DB;
 
@@ -73,7 +73,7 @@ class InstanceRepository
             return null;
         }
 
-        return $this->normalizeRow($row, false);
+        return $this->normalizeRow($row, $includeSecrets);
     }
 
     public function updateCheckpoint(int $id, ?string $lastSuccessAt, string $cursor = ''): void
@@ -171,6 +171,6 @@ class InstanceRepository
             return $stored;
         }
 
-        return trim((string) ((new \GLPIKey())->decrypt($stored) ?? ''));
+        return trim((string) (new \GLPIKey())->decrypt($stored));
     }
 }

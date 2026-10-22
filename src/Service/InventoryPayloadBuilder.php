@@ -78,13 +78,13 @@ final class InventoryPayloadBuilder
         // --- softwares ---
         $softwares = [];
         foreach ($includeApps ? self::extractApps($device) : [] as $app) {
-            $name = trim((string) ($app['name'] ?? ''));
+            $name = trim($app['name']);
             if ($name === '') {
                 continue;
             }
             $entry = new \stdClass();
             $entry->name = $name;
-            $version_str = trim((string) ($app['version'] ?? ''));
+            $version_str = trim($app['version']);
             $entry->version = $version_str !== '' ? $version_str : 'unknown';
             $softwares[] = $entry;
         }
@@ -129,9 +129,51 @@ final class InventoryPayloadBuilder
         $payload->deviceid = self::deviceId($instance, $identifiers);
         $payload->action = 'inventory';
         $payload->itemtype = 'Computer';
+        // Criterion "Inventory tag" of GLPI's entity rules (see EntityRuleManager).
+        $payload->tag = self::inventoryTag($instance);
         $payload->content = $content;
 
         return $payload;
+    }
+
+    /**
+     * Inventory tag sent for every device of an instance: the configured tag, or
+     * "jamfsync-<instance id>" when none is set.
+     *
+     * @param array<string, mixed> $instance
+     */
+    public static function inventoryTag(array $instance): string
+    {
+        $tag = trim((string) ($instance['inventory_tag'] ?? ''));
+
+        return $tag !== '' ? $tag : 'jamfsync-' . (int) ($instance['id'] ?? 0);
+    }
+
+    /**
+     * Identifiers of a JAMF device; device_id falls back to the UDID or the serial number.
+     *
+     * @param array<string, mixed> $device
+     * @return array{device_id: string, udid: string, serial: string, uuid: string}
+     */
+    public static function identifiers(array $device): array
+    {
+        $deviceId = self::extractScalar($device, ['id', 'deviceId', 'deviceID', 'device_id']);
+        $udid = self::extractScalar($device, ['udid', 'UDID']);
+        $serial = self::extractScalar($device, ['serialNumber', 'serialnumber', 'serial']);
+        $uuid = self::extractScalar($device, ['uuid']);
+
+        if ($deviceId === '') {
+            $deviceId = $udid !== ''
+                ? 'udid:' . $udid
+                : ($serial !== '' ? 'serial:' . $serial : 'hash:' . substr(sha1(json_encode($device)), 0, 24));
+        }
+
+        return [
+            'device_id' => $deviceId,
+            'udid' => $udid,
+            'serial' => $serial,
+            'uuid' => $uuid,
+        ];
     }
 
     public static function deviceId(array $instance, array $identifiers): string

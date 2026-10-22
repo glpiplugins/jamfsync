@@ -1,7 +1,7 @@
 {#
  # JAMF Sync — create/edit instance form.
  # Rendered via Instance::showForm() using GLPI's native item-form components:
- # components/form/header.html.twig (opens the form + title bar + CSRF),
+ # components/form/header.html.twig (opens the form + title bar),
  # the fields_macros, and components/form/buttons.html.twig (Add / Save / Delete + closes form).
  #}
 {% import 'components/form/fields_macros.html.twig' as fields %}
@@ -35,12 +35,57 @@
                     'placeholder': is_new ? '' : __('Leave blank to keep existing key', 'jamfsync'),
                 },
             }) }}
+
+            {# Aligned like the fields above; wired by public/js/dist/jamfsync-vue.js (main.js),
+             # which posts the current form values (also before the instance is saved). #}
+            {% set test_connection %}
+                <div class="d-flex align-items-center flex-wrap gap-2">
+                    <button type="button" class="btn btn-outline-secondary"
+                            data-jamfsync-test-connection
+                            data-url="{{ test_url }}"
+                            data-label-running="{{ __('Testing connection…', 'jamfsync') }}"
+                            data-label-failed="{{ __('Connection failed.', 'jamfsync') }}">
+                        <i class="ti ti-plug-connected"></i>
+                        <span>{{ __('Test connection', 'jamfsync') }}</span>
+                    </button>
+                    <span class="small" data-jamfsync-test-result role="status" aria-live="polite"></span>
+                </div>
+            {% endset %}
+            {{ fields.htmlField('', test_connection, __('Connection test', 'jamfsync'), {
+                'wrapper_class': '',
+                'helper': __('Uses the values entered above; with a blank API key the stored key is used.', 'jamfsync'),
+            }) }}
+
+            {% if not is_new %}
+                {% set takeover_check %}
+                    <button type="button" class="btn btn-outline-secondary"
+                            data-jamfsync-takeover-preview
+                            data-url="{{ takeover_url }}"
+                            data-label-running="{{ __('Comparing JAMF with GLPI…', 'jamfsync') }}"
+                            data-label-failed="{{ __('The check failed.', 'jamfsync') }}">
+                        <i class="ti ti-arrows-exchange"></i>
+                        <span>{{ __('Check takeover', 'jamfsync') }}</span>
+                    </button>
+                {% endset %}
+                {{ fields.htmlField('', takeover_check, __('Takeover check', 'jamfsync'), {
+                    'wrapper_class': '',
+                    'helper': __('Shows which existing GLPI computers the next sync takes over by serial number and which devices it creates. Uses the saved settings and changes nothing.', 'jamfsync'),
+                }) }}
+                <div class="col-12" data-jamfsync-takeover-result role="status" aria-live="polite"></div>
+            {% endif %}
         </div>
 
         {{ fields.smallTitle(__('Sync scope', 'jamfsync'), 'ti ti-refresh') }}
         <div class="row">
             {{ fields.dropdownField('Entity', 'entities_id', item.fields['entities_id'], __('Target entity', 'jamfsync'), {
-                'helper': __('Advisory only — GLPI assigns the entity for synced computers via its native inventory entity rules.', 'jamfsync'),
+                'helper': __('Entity for newly imported computers of this instance, applied through the managed entity rule.', 'jamfsync'),
+            }) }}
+            {{ fields.dropdownYesNo('manage_entity_rule', item.fields['manage_entity_rule'], __('Manage entity rule', 'jamfsync'), {
+                'helper': __('Maintain a GLPI entity rule "inventory tag of this instance → target entity". Turn off to use your own entity rules.', 'jamfsync'),
+            }) }}
+            {{ fields.textField('inventory_tag', item.fields['inventory_tag'], __('Inventory tag', 'jamfsync'), {
+                'helper': __('Sent with every device as inventory tag. Leave blank for the default:', 'jamfsync') ~ ' ' ~ default_tag,
+                'additional_attributes': {'placeholder': default_tag, 'maxlength': 255},
             }) }}
             {{ fields.dropdownArrayField('name_source', item.fields['name_source'], {
                 'device_name': __('JAMF device name', 'jamfsync'),

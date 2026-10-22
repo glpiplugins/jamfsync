@@ -1,3 +1,6 @@
 node_modules/
 .phpunit.cache/
 .phpunit.result.cache
+.phpstan.cache/
+.php-cs-fixer.cache
+/build/

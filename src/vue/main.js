@@ -8,6 +8,8 @@ import StatusBanner from './StatusBanner.vue';
 // that lack its mount node:
 //   - #jamfsync-runner-app     -> the full sync runner (config runner page only)
 //   - #jamfsync-status-banner  -> the persistent "sync running" strip (all plugin pages)
+//   - [data-jamfsync-test-connection] -> "Test connection" button of the instance form
+//   - [data-jamfsync-takeover-preview] -> "Check takeover" button of the instance form
 (function () {
     function readJson(value, fallback) {
         if (!value) {
@@ -15,7 +17,7 @@ import StatusBanner from './StatusBanner.vue';
         }
         try {
             return JSON.parse(value);
-        } catch (e) {
+        } catch {
             return fallback;
         }
     }
@@ -40,23 +42,9 @@ import StatusBanner from './StatusBanner.vue';
 
         const instances = readJson(root.dataset.instances, []);
         const labels = readJson(root.dataset.labels, {});
-        const csrf = root.dataset.csrf || '';
+        const apiBase = root.dataset.apiBase || '';
 
-        const app = window.Vue.createApp(RunnerApp, { instances, labels, csrf, apiUrl: 'sync.ajax.php' });
-        const vm = app.mount(root);
-
-        // Wire the server-rendered per-row "Run" / "Full run" buttons to the same runner.
-        document.querySelectorAll('[data-jamf-run]').forEach((button) => {
-            if (button.dataset.jamfRunnerBound === '1') {
-                return;
-            }
-            button.dataset.jamfRunnerBound = '1';
-            button.addEventListener('click', () => {
-                const instanceId = Number(button.getAttribute('data-instance-id') || 0);
-                const full = Number(button.getAttribute('data-full') || 0) === 1;
-                vm.startSafe(full, instanceId);
-            });
-        });
+        window.Vue.createApp(RunnerApp, { instances, labels, apiBase }).mount(root);
 
         return true;
     }
@@ -74,12 +62,103 @@ import StatusBanner from './StatusBanner.vue';
         }
 
         const labels = readJson(root.dataset.labels, {});
-        window.Vue.createApp(StatusBanner, { labels, apiUrl: 'sync.ajax.php' }).mount(root);
+        const apiBase = root.dataset.apiBase || '';
+        window.Vue.createApp(StatusBanner, { labels, apiBase }).mount(root);
 
         return true;
     }
 
+    // Posts the instance form's current values to the test route and shows the answer
+    // next to the button (plain DOM, no Vue needed).
+    function bindTestConnection() {
+        document.querySelectorAll('[data-jamfsync-test-connection]').forEach((button) => {
+            if (button.dataset.jamfsyncBound === '1') {
+                return;
+            }
+            button.dataset.jamfsyncBound = '1';
+            const result = button.parentElement.querySelector('[data-jamfsync-test-result]');
+            const show = (text, ok) => {
+                if (result) {
+                    result.textContent = text;
+                    result.className = 'small ' + (ok ? 'text-success' : 'text-danger');
+                }
+            };
+
+            button.addEventListener('click', async () => {
+                const form = button.closest('form');
+                if (!form) {
+                    return;
+                }
+                const body = new URLSearchParams();
+                ['id', 'jamf_base_url', 'jamf_api_username', 'jamf_api_key', 'verify_tls', 'request_timeout'].forEach((name) => {
+                    const field = form.elements.namedItem(name);
+                    if (field && 'value' in field) {
+                        body.set(name, field.value);
+                    }
+                });
+
+                button.disabled = true;
+                if (result) {
+                    result.textContent = button.dataset.labelRunning || '';
+                    result.className = 'small text-muted';
+                }
+                try {
+                    const response = await fetch(button.dataset.url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                        body: body.toString(),
+                        credentials: 'same-origin',
+                    });
+                    const payload = await response.json();
+                    show(String(payload.message || button.dataset.labelFailed || ''), Boolean(payload.ok));
+                } catch (error) {
+                    show(button.dataset.labelFailed || String(error), false);
+                } finally {
+                    button.disabled = false;
+                }
+            });
+        });
+    }
+
+    // "Check takeover": the server answers rendered (escaped) HTML for the result area.
+    function bindTakeoverPreview() {
+        document.querySelectorAll('[data-jamfsync-takeover-preview]').forEach((button) => {
+            if (button.dataset.jamfsyncBound === '1') {
+                return;
+            }
+            button.dataset.jamfsyncBound = '1';
+            const result = document.querySelector('[data-jamfsync-takeover-result]');
+            const showText = (text, cssClass) => {
+                if (result) {
+                    result.textContent = text;
+                    result.className = 'col-12 small ' + cssClass;
+                }
+            };
+
+            button.addEventListener('click', async () => {
+                button.disabled = true;
+                showText(button.dataset.labelRunning || '', 'text-muted');
+                try {
+                    const response = await fetch(button.dataset.url, { method: 'POST', credentials: 'same-origin' });
+                    const payload = await response.json();
+                    if (payload.ok && result) {
+                        result.className = 'col-12';
+                        result.innerHTML = String(payload.html || '');
+                    } else {
+                        showText(String(payload.message || button.dataset.labelFailed || ''), 'text-danger');
+                    }
+                } catch (error) {
+                    showText(button.dataset.labelFailed || String(error), 'text-danger');
+                } finally {
+                    button.disabled = false;
+                }
+            });
+        });
+    }
+
     function start() {
+        bindTestConnection();
+        bindTakeoverPreview();
         let doneRunner = mountRunner();
         let doneBanner = mountStatusBanner();
         if (doneRunner && doneBanner) {

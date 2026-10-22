@@ -9,7 +9,7 @@ use CommonDBTM;
 class RunChange extends CommonDBTM
 {
     // Keep in sync with Access::RIGHT ('plugin_jamfsync_config').
-    public static $rightname = 'plugin_jamfsync_config';
+    public static string $rightname = 'plugin_jamfsync_config';
 
     public static function getTypeName($nb = 0): string
     {

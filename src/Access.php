@@ -19,17 +19,17 @@ class Access
 
     public static function canView(): bool
     {
-        return (bool) Session::haveRight(self::RIGHT, READ);
+        return Session::haveRight(self::RIGHT, READ);
     }
 
     public static function canConfig(): bool
     {
-        return (bool) Session::haveRight(self::RIGHT, UPDATE);
+        return Session::haveRight(self::RIGHT, UPDATE);
     }
 
     public static function canRun(): bool
     {
-        return (bool) Session::haveRight(self::RIGHT, UPDATE);
+        return Session::haveRight(self::RIGHT, UPDATE);
     }
 
     /**

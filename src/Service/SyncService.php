@@ -4,12 +4,38 @@ declare(strict_types=1);
 
 namespace GlpiPlugin\Jamfsync\Service;
 
+use Glpi\Inventory\Inventory;
 use GlpiPlugin\Jamfsync\Api\JamfClient;
+use GlpiPlugin\Jamfsync\DeviceMapRepository;
 use GlpiPlugin\Jamfsync\InstanceRepository;
+use GlpiPlugin\Jamfsync\NotificationTargetSyncRun;
+use GlpiPlugin\Jamfsync\SyncRun;
+use NotificationEvent;
 use RuntimeException;
 
+/**
+ * Runs one sync job: pulls the JAMF devices of the matching active instances, submits the
+ * changed ones to GLPI's native inventory and logs runs and changes for the monitoring.
+ */
 class SyncService
 {
+    private SyncJobQueue $jobs;
+    private DeviceMapRepository $deviceMaps;
+    private ComputerSnapshot $snapshots;
+    private ComputerAdoption $adoption;
+
+    public function __construct(
+        ?SyncJobQueue $jobs = null,
+        ?DeviceMapRepository $deviceMaps = null,
+        ?ComputerSnapshot $snapshots = null,
+        ?ComputerAdoption $adoption = null
+    ) {
+        $this->jobs = $jobs ?? new SyncJobQueue();
+        $this->deviceMaps = $deviceMaps ?? new DeviceMapRepository();
+        $this->snapshots = $snapshots ?? new ComputerSnapshot();
+        $this->adoption = $adoption ?? new ComputerAdoption();
+    }
+
     public function run(string $mode = 'manual', int $onlyInstanceId = 0, int $jobId = 0): array
     {
         $repository = new InstanceRepository();
@@ -20,7 +46,7 @@ class SyncService
 
         if ($instances === []) {
             if ($jobId > 0) {
-                $this->updateSyncJob($jobId, [
+                $this->jobs->update($jobId, [
                     'status' => 'error',
                     'error_code' => 'no_matching_instances',
                     'error_message' => __('No matching active JAMF instance configured.', 'jamfsync'),
@@ -47,8 +73,8 @@ class SyncService
         $totalInstances = count($instances);
 
         if ($jobId > 0) {
-            $now = date('Y-m-d H:i:s'); // real wall-clock for job timing (async run freezes glpi_currenttime)
-            $this->updateSyncJob($jobId, [
+            $now = date('Y-m-d H:i:s'); // real wall-clock for job timing (a worker run freezes glpi_currenttime)
+            $this->jobs->update($jobId, [
                 'status' => 'running',
                 'mode' => $mode,
                 'is_full' => $isFull ? 1 : 0,
@@ -73,16 +99,20 @@ class SyncService
             $appsCount = 0;
             $processedCount = 0;
             $changedCount = 0;
+            $adopted = 0;
+            $ambiguous = 0;
             $changeEntries = [];
             $status = 'success';
             $message = __('JAMF pull completed.', 'jamfsync');
             $cursorStart = (string) ($instance['last_cursor'] ?? '');
             $cursorEnd = $cursorStart;
+            $client = null;
 
             try {
                 if ($jobId > 0) {
-                    $this->updateSyncJob($jobId, [
-                        'instance_id' => (int) ($instance['id'] ?? 0),
+                    // instance_id keeps the requested scope (0 = all instances; used to detect
+                    // duplicate requests); instance_name shows the instance being processed.
+                    $this->jobs->update($jobId, [
                         'instance_name' => (string) ($instance['name'] ?? ''),
                         'message' => sprintf(__('Processing instance: %s', 'jamfsync'), (string) ($instance['name'] ?? '')),
                         'processed_instances' => $instanceIndex,
@@ -111,8 +141,8 @@ class SyncService
                         continue;
                     }
 
-                    $identifiers = $this->resolveDeviceIdentifiers($device);
-                    $map = $this->findDeviceMap(
+                    $identifiers = InventoryPayloadBuilder::identifiers($device);
+                    $map = $this->deviceMaps->find(
                         (int) ($instance['id'] ?? 0),
                         $identifiers['device_id'],
                         $identifiers['udid'],
@@ -134,7 +164,7 @@ class SyncService
                     // (With native inventory, software cannot be attached without submitting the
                     // computer, so pull_devices=0 means nothing is written for this device.)
                     if (!$needsSubmit) {
-                        $this->upsertDeviceMap(
+                        $this->deviceMaps->upsert(
                             (int) ($instance['id'] ?? 0),
                             $identifiers,
                             $computerId,
@@ -148,15 +178,30 @@ class SyncService
                         continue;
                     }
 
+                    $payload = InventoryPayloadBuilder::build($device, $instance, $identifiers, $includeApps);
+
+                    // An existing computer without this device's agent (data import, other
+                    // plugin, other school's instance) is taken over by serial number; a serial
+                    // shared by several computers is skipped rather than guessed.
+                    $adoption = $this->adoption->prepare((string) $payload->deviceid, (string) $payload->tag, $identifiers['serial']);
+                    if ($adoption['state'] === ComputerAdoption::AMBIGUOUS) {
+                        $ambiguous++;
+                        $globalProcessedDevices++;
+                        continue;
+                    }
+                    if ($adoption['state'] === ComputerAdoption::ADOPT) {
+                        $adopted++;
+                        $computerId = $adoption['computers_id'];
+                    }
+
                     $wasNew = $computerId <= 0;
-                    $before = $computerId > 0 ? $this->buildComputerSnapshot($computerId) : [];
+                    $before = $computerId > 0 ? $this->snapshots->build($computerId) : [];
 
                     // Native GLPI inventory submission: creates/updates the Computer + OS +
                     // software + storage with native history, locks and de-duplication. The
-                    // target entity is left to GLPI's own inventory entity rules / default.
-                    $payload = InventoryPayloadBuilder::build($device, $instance, $identifiers, $includeApps);
+                    // entity follows GLPI's entity rules (see EntityRuleManager).
                     // GLPI's inventory expects a decoded object (stdClass), not a JSON string.
-                    $inventory = new \Glpi\Inventory\Inventory($payload);
+                    $inventory = new Inventory($payload);
                     if ($inventory->inError()) {
                         throw new RuntimeException(sprintf(
                             __('Inventory import failed: %s', 'jamfsync'),
@@ -169,18 +214,23 @@ class SyncService
                         $identifiers['serial'],
                         $identifiers['uuid']
                     );
-                    $changedCount++;
                     if ($includeApps) {
                         $appsCount += count(InventoryPayloadBuilder::extractApps($device));
                     }
 
-                    $after = $computerId > 0 ? $this->buildComputerSnapshot($computerId) : [];
+                    $after = $computerId > 0 ? $this->snapshots->build($computerId) : [];
                     $displayName = InventoryPayloadBuilder::resolveComputerNameFromDevice($instance, $device);
-                    foreach ($this->diffSnapshots($wasNew, $before, $after, $identifiers, $computerId, $displayName) as $entry) {
+                    $entries = ComputerSnapshot::diff($wasNew, $before, $after, $identifiers, $computerId, $displayName);
+                    // "Changed" counts computers whose GLPI data really changed (created, core
+                    // fields, OS or apps), not every device a full resync submits again.
+                    if ($entries !== []) {
+                        $changedCount++;
+                    }
+                    foreach ($entries as $entry) {
                         $changeEntries[] = $entry;
                     }
 
-                    $this->upsertDeviceMap(
+                    $this->deviceMaps->upsert(
                         (int) ($instance['id'] ?? 0),
                         $identifiers,
                         $computerId,
@@ -193,7 +243,7 @@ class SyncService
 
                     $globalProcessedDevices++;
                     if ($jobId > 0 && ($globalProcessedDevices % 10 === 0 || $globalProcessedDevices === $globalDiscoveredDevices)) {
-                        $this->updateSyncJob($jobId, [
+                        $this->jobs->update($jobId, [
                             'total_devices' => $globalDiscoveredDevices,
                             'processed_devices' => $globalProcessedDevices,
                             'changed_count' => $globalChanged + $changedCount,
@@ -215,14 +265,41 @@ class SyncService
                 $message = $exception->getMessage();
                 $failed++;
                 if ($jobId > 0) {
-                    $this->updateSyncJob($jobId, [
-                        'status' => 'error',
+                    // No status change here: the job goes on with the next instance and gets
+                    // its final status (error, since $failed > 0) at the end.
+                    $this->jobs->update($jobId, [
                         'error_code' => 'instance_sync_failed',
                         'error_message' => $message,
                         'message' => $message,
                         'date_mod' => $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s'),
                     ]);
                 }
+            }
+
+            if ($adopted > 0) {
+                $message .= ' ' . sprintf(
+                    _n('%d existing computer was taken over.', '%d existing computers were taken over.', $adopted, 'jamfsync'),
+                    $adopted
+                );
+            }
+            if ($ambiguous > 0) {
+                $message .= ' ' . sprintf(
+                    _n(
+                        '%d device was skipped: its serial number belongs to several computers in GLPI.',
+                        '%d devices were skipped: their serial numbers belong to several computers in GLPI.',
+                        $ambiguous,
+                        'jamfsync'
+                    ),
+                    $ambiguous
+                );
+            }
+
+            $retries = $client?->getRetryCount() ?? 0;
+            if ($retries > 0) {
+                $message .= ' ' . sprintf(
+                    _n('%d JAMF request was retried.', '%d JAMF requests were retried.', $retries, 'jamfsync'),
+                    $retries
+                );
             }
 
             $finishedAt = date('Y-m-d H:i:s'); // real wall-clock so the logged run shows a real duration
@@ -250,12 +327,16 @@ class SyncService
                 $this->logRunChanges($runId, $instance, $changeEntries, $startedAt, $finishedAt);
             }
 
+            if ($mode === 'cron' && $status === 'error') {
+                $this->notifyScheduledFailure((int) ($instance['id'] ?? 0), $runId);
+            }
+
             $totalDevices += $devicesCount;
             $totalApps += $appsCount;
             $globalChanged += $changedCount;
 
             if ($jobId > 0) {
-                $this->updateSyncJob($jobId, [
+                $this->jobs->update($jobId, [
                     'processed_instances' => $instanceIndex + 1,
                     'total_devices' => $globalDiscoveredDevices,
                     'processed_devices' => $globalProcessedDevices,
@@ -273,8 +354,8 @@ class SyncService
             : sprintf(__('JAMF pull completed for %d instance(s).', 'jamfsync'), count($instances));
 
         if ($jobId > 0) {
-            $now = date('Y-m-d H:i:s'); // real wall-clock for job timing (async run freezes glpi_currenttime)
-            $this->updateSyncJob($jobId, [
+            $now = date('Y-m-d H:i:s'); // real wall-clock for job timing (a worker run freezes glpi_currenttime)
+            $this->jobs->update($jobId, [
                 'status' => $status,
                 'error_code' => $status === 'success' ? '' : 'sync_failed',
                 'error_message' => $status === 'success' ? null : $message,
@@ -297,122 +378,6 @@ class SyncService
         ];
     }
 
-    private function findDeviceMap(int $instanceId, string $deviceId, string $udid, string $serial): ?array
-    {
-        global $DB;
-
-        if ($deviceId !== '') {
-            $map = $DB->request([
-                'FROM' => 'glpi_plugin_jamfsync_devicemaps',
-                'WHERE' => [
-                    'jamf_instances_id' => $instanceId,
-                    'jamf_device_id' => $deviceId,
-                ],
-                'LIMIT' => 1,
-            ])->current();
-            if ($map) {
-                return $map;
-            }
-        }
-
-        if ($udid !== '') {
-            $map = $DB->request([
-                'FROM' => 'glpi_plugin_jamfsync_devicemaps',
-                'WHERE' => [
-                    'jamf_instances_id' => $instanceId,
-                    'jamf_udid' => $udid,
-                ],
-                'LIMIT' => 1,
-            ])->current();
-            if ($map) {
-                return $map;
-            }
-        }
-
-        if ($serial !== '') {
-            $map = $DB->request([
-                'FROM' => 'glpi_plugin_jamfsync_devicemaps',
-                'WHERE' => [
-                    'jamf_instances_id' => $instanceId,
-                    'jamf_serial' => $serial,
-                ],
-                'LIMIT' => 1,
-            ])->current();
-            if ($map) {
-                return $map;
-            }
-        }
-
-        return null;
-    }
-
-    private function upsertDeviceMap(
-        int $instanceId,
-        array $identifiers,
-        int $computerId,
-        int $entitiesId,
-        string $deviceSignature,
-        string $appsSignature,
-        string $lastCheckinAt,
-        string $seenAt
-    ): void {
-        global $DB;
-
-        $where = [
-            'jamf_instances_id' => $instanceId,
-            'jamf_device_id' => $identifiers['device_id'],
-        ];
-
-        $payload = [
-            'jamf_instances_id' => $instanceId,
-            'jamf_device_id' => $identifiers['device_id'],
-            'jamf_udid' => $identifiers['udid'],
-            'jamf_serial' => $identifiers['serial'],
-            'computers_id' => $computerId,
-            'entities_id' => $entitiesId,
-            'device_signature' => $deviceSignature,
-            'apps_signature' => $appsSignature,
-            'last_seen_at' => $seenAt,
-            'last_checkin_at' => $lastCheckinAt !== '' ? $lastCheckinAt : null,
-            'date_mod' => $seenAt,
-        ];
-
-        $existing = $DB->request([
-            'FROM' => 'glpi_plugin_jamfsync_devicemaps',
-            'WHERE' => $where,
-            'LIMIT' => 1,
-        ])->current();
-
-        if ($existing) {
-            $DB->update('glpi_plugin_jamfsync_devicemaps', $payload, ['id' => (int) $existing['id']]);
-            return;
-        }
-
-        $payload['date_creation'] = $seenAt;
-        $DB->insert('glpi_plugin_jamfsync_devicemaps', $payload);
-    }
-
-    private function resolveDeviceIdentifiers(array $device): array
-    {
-        $deviceId = InventoryPayloadBuilder::extractScalar($device, ['id', 'deviceId', 'deviceID', 'device_id']);
-        $udid = InventoryPayloadBuilder::extractScalar($device, ['udid', 'UDID']);
-        $serial = InventoryPayloadBuilder::extractScalar($device, ['serialNumber', 'serialnumber', 'serial']);
-        $uuid = InventoryPayloadBuilder::extractScalar($device, ['uuid']);
-
-        if ($deviceId === '') {
-            $deviceId = $udid !== ''
-                ? 'udid:' . $udid
-                : ($serial !== '' ? 'serial:' . $serial : 'hash:' . substr(sha1(json_encode($device)), 0, 24));
-        }
-
-        return [
-            'device_id' => $deviceId,
-            'udid' => $udid,
-            'serial' => $serial,
-            'uuid' => $uuid,
-        ];
-    }
-
     private function buildDeviceSignature(array $instance, array $device, array $identifiers): string
     {
         $signatureData = [
@@ -422,6 +387,10 @@ class SyncService
             'uuid' => $identifiers['uuid'],
             'name' => InventoryPayloadBuilder::resolveComputerNameFromDevice($instance, $device),
             'name_source' => (string) ($instance['name_source'] ?? 'device_name'),
+            // Changing the tag or the managed target entity resubmits the devices, so the
+            // entity rule (and an automatic entity transfer) applies without a full resync.
+            'inventory_tag' => InventoryPayloadBuilder::inventoryTag($instance),
+            'target_entity' => (int) ($instance['manage_entity_rule'] ?? 0) === 1 ? (int) ($instance['entities_id'] ?? 0) : null,
             'manufacturer' => InventoryPayloadBuilder::extractNestedScalar($device, ['manufacturer', 'vendor', 'hardware.manufacturer']),
             'model' => InventoryPayloadBuilder::extractNestedScalar($device, ['model', 'modelName', 'hardware.model']),
             'os_name' => InventoryPayloadBuilder::extractNestedScalar($device, ['os.prefix', 'osName', 'os.name', 'operatingSystem', 'platform']),
@@ -504,407 +473,6 @@ class SyncService
         return 0;
     }
 
-    /**
-     * Build monitoring run-change entries by diffing the computer snapshot taken before and
-     * after the inventory submission (device core fields, OS, and dynamic software list).
-     *
-     * @param array<string, mixed> $before
-     * @param array<string, mixed> $after
-     * @param array{device_id: string, udid: string, serial: string, uuid: string} $identifiers
-     * @return array<int, array<string, mixed>>
-     */
-    private function diffSnapshots(bool $wasNew, array $before, array $after, array $identifiers, int $computerId, string $name): array
-    {
-        $deviceId = (string) ($identifiers['device_id'] ?? '');
-        $entries = [];
-
-        $coreBefore = $before;
-        $coreAfter = $after;
-        unset($coreBefore['os'], $coreBefore['software'], $coreAfter['os'], $coreAfter['software']);
-
-        if ($wasNew || $coreBefore != $coreAfter) {
-            $entries[] = [
-                'change_type' => 'device',
-                'jamf_device_id' => $deviceId,
-                'computers_id' => $computerId,
-                'computer_name' => $name,
-                'object_name' => $name,
-                'details' => $wasNew ? __('Computer created', 'jamfsync') : __('Computer updated', 'jamfsync'),
-                'before_json' => $this->encodeJsonForLog($wasNew ? [] : $coreBefore),
-                'after_json' => $this->encodeJsonForLog($coreAfter),
-                'impacted_devices' => null,
-            ];
-        }
-
-        $osBefore = (array) ($before['os'] ?? []);
-        $osAfter = (array) ($after['os'] ?? []);
-        if ($osAfter !== [] && $osBefore != $osAfter) {
-            $osName = trim((string) ($osAfter['name'] ?? '') . ' ' . (string) ($osAfter['version'] ?? ''));
-            $entries[] = [
-                'change_type' => 'os',
-                'jamf_device_id' => $deviceId,
-                'computers_id' => $computerId,
-                'computer_name' => $name,
-                'object_name' => $osName !== '' ? $osName : __('OS changed', 'jamfsync'),
-                'details' => __('OS changed', 'jamfsync'),
-                'before_json' => $this->encodeJsonForLog($osBefore),
-                'after_json' => $this->encodeJsonForLog($osAfter),
-                'impacted_devices' => null,
-            ];
-        }
-
-        // For a brand-new computer, every app would be a spurious "added" entry (dozens per
-        // device) — that is both noise and a memory hog on large first imports. The single
-        // "Computer created" entry above already conveys it; only log per-app deltas for
-        // computers that already existed.
-        if (!$wasNew) {
-            $swBefore = (array) ($before['software'] ?? []);
-            $swAfter = (array) ($after['software'] ?? []);
-            foreach (array_values(array_diff($swAfter, $swBefore)) as $app) {
-                $entries[] = $this->appChangeEntry($deviceId, $computerId, $name, (string) $app, __('App added', 'jamfsync'));
-            }
-            foreach (array_values(array_diff($swBefore, $swAfter)) as $app) {
-                $entries[] = $this->appChangeEntry($deviceId, $computerId, $name, (string) $app, __('App removed', 'jamfsync'));
-            }
-        }
-
-        return $entries;
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function appChangeEntry(string $deviceId, int $computerId, string $name, string $appLabel, string $details): array
-    {
-        return [
-            'change_type' => 'app',
-            'jamf_device_id' => $deviceId,
-            'computers_id' => $computerId,
-            'computer_name' => $name,
-            'object_name' => $appLabel,
-            'details' => $details,
-            'before_json' => null,
-            'after_json' => null,
-            'impacted_devices' => null,
-        ];
-    }
-
-    private function buildComputerSnapshot(int $computerId): array
-    {
-        global $DB;
-
-        if ($computerId <= 0) {
-            return [];
-        }
-
-        $computer = $DB->request([
-            'FROM' => 'glpi_computers',
-            'WHERE' => ['id' => $computerId],
-            'LIMIT' => 1,
-        ])->current();
-        if (!$computer) {
-            return [];
-        }
-
-        $os = $DB->request([
-            'FROM' => 'glpi_items_operatingsystems',
-            'WHERE' => [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'is_dynamic' => 1,
-            ],
-            'ORDER' => ['id ASC'],
-            'LIMIT' => 1,
-        ])->current();
-        $disk = $DB->request([
-            'FROM' => 'glpi_items_disks',
-            'WHERE' => [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'is_dynamic' => 1,
-                'name' => 'JAMF Storage',
-            ],
-            'LIMIT' => 1,
-        ])->current();
-        $battery = $DB->request([
-            'FROM' => 'glpi_items_devicebatteries',
-            'WHERE' => [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'is_dynamic' => 1,
-            ],
-            'ORDER' => ['id ASC'],
-            'LIMIT' => 1,
-        ])->current();
-        $network = $DB->request([
-            'FROM' => 'glpi_networkports',
-            'WHERE' => [
-                'itemtype' => 'Computer',
-                'items_id' => $computerId,
-                'is_dynamic' => 1,
-                'name' => 'JAMF Network',
-            ],
-            'LIMIT' => 1,
-        ])->current();
-
-        // Dynamic (inventory-managed) software, for the monitoring app-change diff.
-        $softwareRows = $DB->request([
-            'SELECT' => ['glpi_softwares.name AS sname', 'glpi_softwareversions.name AS vname'],
-            'FROM' => 'glpi_items_softwareversions',
-            'LEFT JOIN' => [
-                'glpi_softwareversions' => [
-                    'FKEY' => ['glpi_items_softwareversions' => 'softwareversions_id', 'glpi_softwareversions' => 'id'],
-                ],
-                'glpi_softwares' => [
-                    'FKEY' => ['glpi_softwareversions' => 'softwares_id', 'glpi_softwares' => 'id'],
-                ],
-            ],
-            'WHERE' => [
-                'glpi_items_softwareversions.itemtype' => 'Computer',
-                'glpi_items_softwareversions.items_id' => $computerId,
-                'glpi_items_softwareversions.is_dynamic' => 1,
-            ],
-        ]);
-        $software = [];
-        foreach ($softwareRows as $swRow) {
-            $label = trim((string) ($swRow['sname'] ?? '') . ' ' . (string) ($swRow['vname'] ?? ''));
-            if ($label !== '') {
-                $software[] = $label;
-            }
-        }
-        sort($software);
-
-        return [
-            'id' => (int) ($computer['id'] ?? 0),
-            'name' => trim((string) ($computer['name'] ?? '')),
-            'serial' => trim((string) ($computer['serial'] ?? '')),
-            'udid' => trim((string) ($computer['otherserial'] ?? '')),
-            'uuid' => trim((string) ($computer['uuid'] ?? '')),
-            'last_boot' => trim((string) ($computer['last_boot'] ?? '')),
-            'comment' => trim((string) ($computer['comment'] ?? '')),
-            'os' => $this->formatOperatingSystemState($os),
-            'storage_total_mib' => (int) ($disk['totalsize'] ?? 0),
-            'storage_free_mib' => (int) ($disk['freesize'] ?? 0),
-            'battery_percent' => (int) ($battery['real_capacity'] ?? 0),
-            'public_ip' => trim((string) ($network['comment'] ?? '')),
-            'mac' => trim((string) ($network['mac'] ?? '')),
-            'software' => $software,
-        ];
-    }
-
-    private function formatOperatingSystemState($row): array
-    {
-        if (!is_array($row) || $row === []) {
-            return [];
-        }
-
-        return [
-            'name' => $this->getNameFromTableId('glpi_operatingsystems', (int) ($row['operatingsystems_id'] ?? 0)),
-            'version' => $this->getNameFromTableId('glpi_operatingsystemversions', (int) ($row['operatingsystemversions_id'] ?? 0)),
-            'service_pack' => $this->getNameFromTableId('glpi_operatingsystemservicepacks', (int) ($row['operatingsystemservicepacks_id'] ?? 0)),
-            'architecture' => $this->getNameFromTableId('glpi_operatingsystemarchitectures', (int) ($row['operatingsystemarchitectures_id'] ?? 0)),
-            'kernel' => $this->getNameFromTableId('glpi_operatingsystemkernelversions', (int) ($row['operatingsystemkernelversions_id'] ?? 0)),
-            'edition' => $this->getNameFromTableId('glpi_operatingsystemeditions', (int) ($row['operatingsystemeditions_id'] ?? 0)),
-            'install_date' => trim((string) ($row['install_date'] ?? '')),
-        ];
-    }
-
-    private function getNameFromTableId(string $table, int $id): string
-    {
-        global $DB;
-
-        static $cache = [];
-        if ($id <= 0) {
-            return '';
-        }
-
-        if (isset($cache[$table][$id])) {
-            return $cache[$table][$id];
-        }
-
-        $row = $DB->request([
-            'FROM' => $table,
-            'WHERE' => ['id' => $id],
-            'LIMIT' => 1,
-        ])->current();
-
-        $cache[$table][$id] = trim((string) ($row['name'] ?? ''));
-        return $cache[$table][$id];
-    }
-
-    private function encodeJsonForLog($value): ?string
-    {
-        if ($value === null) {
-            return null;
-        }
-
-        if (is_array($value) && $value === []) {
-            return null;
-        }
-
-        $encoded = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        if (!is_string($encoded) || $encoded === 'null' || $encoded === '') {
-            return null;
-        }
-
-        return $encoded;
-    }
-
-    public function createSyncJob(string $mode, int $instanceId = 0): int
-    {
-        global $DB;
-
-        if (!$DB->tableExists('glpi_plugin_jamfsync_syncjobs')) {
-            return 0;
-        }
-
-        $now = $_SESSION['glpi_currenttime'] ?? date('Y-m-d H:i:s');
-        $isFull = str_contains($mode, 'full') ? 1 : 0;
-
-        $DB->insert('glpi_plugin_jamfsync_syncjobs', [
-            'status' => 'queued',
-            'mode' => $mode,
-            'is_full' => $isFull,
-            'instance_id' => max(0, $instanceId),
-            'instance_name' => '',
-            'total_instances' => 0,
-            'processed_instances' => 0,
-            'total_devices' => 0,
-            'processed_devices' => 0,
-            'changed_count' => 0,
-            'apps_count' => 0,
-            'last_run_id' => 0,
-            'error_code' => '',
-            'error_message' => null,
-            'message' => __('Job queued', 'jamfsync'),
-            'started_at' => null,
-            'finished_at' => null,
-            'date_creation' => $now,
-            'date_mod' => $now,
-        ]);
-
-        return (int) $DB->insertId();
-    }
-
-    /**
-     * The most recent still-active (queued/running) sync job, if any. Used by the UI to
-     * show a persistent "sync running" indicator that survives page reloads. Returns the
-     * same shape as getSyncJob() (progress_percent + stall detection applied).
-     *
-     * @return array<string, mixed>|null
-     */
-    public function getLatestActiveJob(): ?array
-    {
-        global $DB;
-
-        if (!$DB->tableExists('glpi_plugin_jamfsync_syncjobs')) {
-            return null;
-        }
-
-        $row = $DB->request([
-            'SELECT' => ['id'],
-            'FROM' => 'glpi_plugin_jamfsync_syncjobs',
-            'WHERE' => ['status' => ['queued', 'running']],
-            'ORDER' => ['id DESC'],
-            'LIMIT' => 1,
-        ])->current();
-
-        if (!$row) {
-            return null;
-        }
-
-        return $this->getSyncJob((int) $row['id']);
-    }
-
-    public function getSyncJob(int $jobId): ?array
-    {
-        global $DB;
-
-        if ($jobId <= 0 || !$DB->tableExists('glpi_plugin_jamfsync_syncjobs')) {
-            return null;
-        }
-
-        $row = $DB->request([
-            'FROM' => 'glpi_plugin_jamfsync_syncjobs',
-            'WHERE' => ['id' => $jobId],
-            'LIMIT' => 1,
-        ])->current();
-
-        if (!$row) {
-            return null;
-        }
-
-        // Detect stalled jobs: running but no heartbeat update for 3 minutes.
-        if (
-            (string) ($row['status'] ?? '') === 'running'
-            && strtotime((string) ($row['date_mod'] ?? '')) > 0
-            && strtotime((string) ($row['date_mod'] ?? '')) < (time() - 180)
-        ) {
-            $now = date('Y-m-d H:i:s'); // real wall-clock for job timing (async run freezes glpi_currenttime)
-            $stalledMessage = __('Sync job appears stalled (no progress heartbeat).', 'jamfsync');
-            $this->updateSyncJob($jobId, [
-                'status' => 'stalled',
-                'error_code' => 'stalled_timeout',
-                'error_message' => $stalledMessage,
-                'message' => $stalledMessage,
-                'finished_at' => $now,
-                'date_mod' => $now,
-            ]);
-            $row['status'] = 'stalled';
-            $row['error_code'] = 'stalled_timeout';
-            $row['error_message'] = $stalledMessage;
-            $row['message'] = $stalledMessage;
-            $row['finished_at'] = $now;
-            $row['date_mod'] = $now;
-        }
-
-        $totalDevices = (int) ($row['total_devices'] ?? 0);
-        $processedDevices = (int) ($row['processed_devices'] ?? 0);
-        $progressPercent = 0;
-        if ($totalDevices > 0) {
-            $progressPercent = (int) max(0, min(100, floor(($processedDevices / $totalDevices) * 100)));
-        } elseif ((int) ($row['total_instances'] ?? 0) > 0) {
-            $progressPercent = (int) max(0, min(100, floor(((int) ($row['processed_instances'] ?? 0) / (int) ($row['total_instances'] ?? 0)) * 100)));
-        }
-
-        return [
-            'id' => (int) ($row['id'] ?? 0),
-            'status' => (string) ($row['status'] ?? 'queued'),
-            'mode' => (string) ($row['mode'] ?? 'manual'),
-            'is_full' => (int) ($row['is_full'] ?? 0),
-            'instance_id' => (int) ($row['instance_id'] ?? 0),
-            'instance_name' => (string) ($row['instance_name'] ?? ''),
-            'total_instances' => (int) ($row['total_instances'] ?? 0),
-            'processed_instances' => (int) ($row['processed_instances'] ?? 0),
-            'total_devices' => $totalDevices,
-            'processed_devices' => $processedDevices,
-            'changed_count' => (int) ($row['changed_count'] ?? 0),
-            'apps_count' => (int) ($row['apps_count'] ?? 0),
-            'last_run_id' => (int) ($row['last_run_id'] ?? 0),
-            'error_code' => (string) ($row['error_code'] ?? ''),
-            'error_message' => (string) ($row['error_message'] ?? ''),
-            'message' => (string) ($row['message'] ?? ''),
-            'started_at' => (string) ($row['started_at'] ?? ''),
-            'finished_at' => (string) ($row['finished_at'] ?? ''),
-            'progress_percent' => $progressPercent,
-        ];
-    }
-
-    private function updateSyncJob(int $jobId, array $fields): void
-    {
-        global $DB;
-
-        if ($jobId <= 0 || $fields === [] || !$DB->tableExists('glpi_plugin_jamfsync_syncjobs')) {
-            return;
-        }
-
-        // Async syncs run in a single request, so $_SESSION['glpi_currenttime'] is frozen for
-        // the whole run. Stamp the job heartbeat with REAL wall-clock time — otherwise a
-        // long-running job never moves date_mod and getSyncJob() falsely flags it "stalled".
-        $fields['date_mod'] = date('Y-m-d H:i:s');
-        $DB->update('glpi_plugin_jamfsync_syncjobs', $fields, ['id' => $jobId]);
-    }
-
     private function logRun(
         array $instance,
         string $mode,
@@ -943,6 +511,39 @@ class SyncService
         ]);
 
         return (int) $DB->insertId();
+    }
+
+    /**
+     * Raise the GLPI notification "Scheduled sync failed" when a scheduled run of an instance
+     * fails after a successful one, not again for every hourly repetition of the same failure.
+     */
+    private function notifyScheduledFailure(int $instanceId, int $runId): void
+    {
+        global $DB;
+
+        if ($runId <= 0) {
+            return;
+        }
+
+        $previous = $DB->request([
+            'SELECT' => ['status'],
+            'FROM' => SyncRun::getTable(),
+            'WHERE' => [
+                'jamf_instances_id' => $instanceId,
+                'mode' => 'cron',
+                'id' => ['<', $runId],
+            ],
+            'ORDER' => ['id DESC'],
+            'LIMIT' => 1,
+        ])->current();
+        if ($previous && ($previous['status'] ?? '') === 'error') {
+            return;
+        }
+
+        $run = new SyncRun();
+        if ($run->getFromDB($runId)) {
+            NotificationEvent::raiseEvent(NotificationTargetSyncRun::EVENT_FAILED, $run);
+        }
     }
 
     private function logRunChanges(int $runId, array $instance, array $changeEntries, string $startedAt, string $finishedAt): void

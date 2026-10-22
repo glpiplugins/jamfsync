@@ -21,10 +21,10 @@ function plugin_jamfsync_migration_0_3_0(Migration $migration): void
             `request_timeout` INT UNSIGNED NOT NULL DEFAULT 30,
             `page_size` INT UNSIGNED NOT NULL DEFAULT 200,
             `is_active` TINYINT(1) NOT NULL DEFAULT 1,
-            `last_success_at` DATETIME DEFAULT NULL,
+            `last_success_at` TIMESTAMP NULL DEFAULT NULL,
             `last_cursor` VARCHAR(255) NOT NULL DEFAULT '',
-            `date_creation` DATETIME DEFAULT NULL,
-            `date_mod` DATETIME DEFAULT NULL,
+            `date_creation` TIMESTAMP NULL DEFAULT NULL,
+            `date_mod` TIMESTAMP NULL DEFAULT NULL,
             PRIMARY KEY (`id`),
             KEY `idx_active` (`is_active`),
             KEY `idx_entity` (`entities_id`)
@@ -47,10 +47,10 @@ function plugin_jamfsync_migration_0_3_0(Migration $migration): void
             `is_full` TINYINT(1) NOT NULL DEFAULT 0,
             `cursor_start` VARCHAR(255) NOT NULL DEFAULT '',
             `cursor_end` VARCHAR(255) NOT NULL DEFAULT '',
-            `started_at` DATETIME DEFAULT NULL,
-            `finished_at` DATETIME DEFAULT NULL,
-            `date_creation` DATETIME DEFAULT NULL,
-            `date_mod` DATETIME DEFAULT NULL,
+            `started_at` TIMESTAMP NULL DEFAULT NULL,
+            `finished_at` TIMESTAMP NULL DEFAULT NULL,
+            `date_creation` TIMESTAMP NULL DEFAULT NULL,
+            `date_mod` TIMESTAMP NULL DEFAULT NULL,
             PRIMARY KEY (`id`),
             KEY `idx_instance` (`jamf_instances_id`),
             KEY `idx_entity` (`entities_id`),
@@ -70,10 +70,10 @@ function plugin_jamfsync_migration_0_3_0(Migration $migration): void
             `entities_id` INT UNSIGNED NOT NULL DEFAULT 0,
             `device_signature` VARCHAR(64) NOT NULL DEFAULT '',
             `apps_signature` VARCHAR(64) NOT NULL DEFAULT '',
-            `last_seen_at` DATETIME DEFAULT NULL,
-            `last_checkin_at` DATETIME DEFAULT NULL,
-            `date_creation` DATETIME DEFAULT NULL,
-            `date_mod` DATETIME DEFAULT NULL,
+            `last_seen_at` TIMESTAMP NULL DEFAULT NULL,
+            `last_checkin_at` TIMESTAMP NULL DEFAULT NULL,
+            `date_creation` TIMESTAMP NULL DEFAULT NULL,
+            `date_mod` TIMESTAMP NULL DEFAULT NULL,
             PRIMARY KEY (`id`),
             UNIQUE KEY `uniq_instance_device` (`jamf_instances_id`, `jamf_device_id`),
             KEY `idx_instance_udid` (`jamf_instances_id`, `jamf_udid`),
@@ -89,8 +89,8 @@ function plugin_jamfsync_migration_0_3_0(Migration $migration): void
             `jamf_device_id` VARCHAR(191) NOT NULL DEFAULT '',
             `computers_id` INT UNSIGNED NOT NULL DEFAULT 0,
             `softwareversions_id` INT UNSIGNED NOT NULL DEFAULT 0,
-            `date_creation` DATETIME DEFAULT NULL,
-            `date_mod` DATETIME DEFAULT NULL,
+            `date_creation` TIMESTAMP NULL DEFAULT NULL,
+            `date_mod` TIMESTAMP NULL DEFAULT NULL,
             PRIMARY KEY (`id`),
             UNIQUE KEY `uniq_instance_device_softwareversion` (`jamf_instances_id`, `jamf_device_id`, `softwareversions_id`),
             KEY `idx_computer` (`computers_id`),
@@ -112,8 +112,8 @@ function plugin_jamfsync_migration_0_3_0(Migration $migration): void
             `before_json` LONGTEXT DEFAULT NULL,
             `after_json` LONGTEXT DEFAULT NULL,
             `impacted_devices` LONGTEXT DEFAULT NULL,
-            `date_creation` DATETIME DEFAULT NULL,
-            `date_mod` DATETIME DEFAULT NULL,
+            `date_creation` TIMESTAMP NULL DEFAULT NULL,
+            `date_mod` TIMESTAMP NULL DEFAULT NULL,
             PRIMARY KEY (`id`),
             KEY `idx_syncrun` (`syncruns_id`),
             KEY `idx_syncrun_type` (`syncruns_id`, `change_type`),
@@ -138,10 +138,10 @@ function plugin_jamfsync_migration_0_3_0(Migration $migration): void
             `apps_count` INT UNSIGNED NOT NULL DEFAULT 0,
             `last_run_id` INT UNSIGNED NOT NULL DEFAULT 0,
             `message` TEXT DEFAULT NULL,
-            `started_at` DATETIME DEFAULT NULL,
-            `finished_at` DATETIME DEFAULT NULL,
-            `date_creation` DATETIME DEFAULT NULL,
-            `date_mod` DATETIME DEFAULT NULL,
+            `started_at` TIMESTAMP NULL DEFAULT NULL,
+            `finished_at` TIMESTAMP NULL DEFAULT NULL,
+            `date_creation` TIMESTAMP NULL DEFAULT NULL,
+            `date_mod` TIMESTAMP NULL DEFAULT NULL,
             PRIMARY KEY (`id`),
             KEY `idx_status` (`status`),
             KEY `idx_instance` (`instance_id`),
@@ -199,7 +199,7 @@ function plugin_jamfsync_migration_0_3_0(Migration $migration): void
             'value' => 200,
             'after' => 'request_timeout',
         ]);
-        $migration->addField('glpi_plugin_jamfsync_instances', 'last_success_at', 'datetime', [
+        $migration->addField('glpi_plugin_jamfsync_instances', 'last_success_at', 'timestamp', [
             'after' => 'is_active',
         ]);
         $migration->addField('glpi_plugin_jamfsync_instances', 'last_cursor', 'string', [
@@ -227,10 +227,10 @@ function plugin_jamfsync_migration_0_3_0(Migration $migration): void
             'value' => 0,
             'after' => 'computers_id',
         ]);
-        $migration->addField('glpi_plugin_jamfsync_devicemaps', 'last_seen_at', 'datetime', [
+        $migration->addField('glpi_plugin_jamfsync_devicemaps', 'last_seen_at', 'timestamp', [
             'after' => 'entities_id',
         ]);
-        $migration->addField('glpi_plugin_jamfsync_devicemaps', 'last_checkin_at', 'datetime', [
+        $migration->addField('glpi_plugin_jamfsync_devicemaps', 'last_checkin_at', 'timestamp', [
             'after' => 'last_seen_at',
         ]);
         $migration->addField('glpi_plugin_jamfsync_devicemaps', 'device_signature', 'string', [
@@ -362,10 +362,10 @@ function plugin_jamfsync_migration_0_3_0(Migration $migration): void
         $migration->addField('glpi_plugin_jamfsync_syncjobs', 'message', 'text', [
             'after' => 'last_run_id',
         ]);
-        $migration->addField('glpi_plugin_jamfsync_syncjobs', 'started_at', 'datetime', [
+        $migration->addField('glpi_plugin_jamfsync_syncjobs', 'started_at', 'timestamp', [
             'after' => 'message',
         ]);
-        $migration->addField('glpi_plugin_jamfsync_syncjobs', 'finished_at', 'datetime', [
+        $migration->addField('glpi_plugin_jamfsync_syncjobs', 'finished_at', 'timestamp', [
             'after' => 'started_at',
         ]);
         $migration->addKey('glpi_plugin_jamfsync_syncjobs', ['status'], 'idx_status', 'INDEX');

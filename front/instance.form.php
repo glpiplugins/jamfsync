@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 use GlpiPlugin\Jamfsync\Instance;
 
-include_once __DIR__ . '/../../../inc/includes.php';
-
 $instance = new Instance();
 
 if (isset($_POST['add'])) {
@@ -25,7 +23,7 @@ if (isset($_POST['add'])) {
     Html::back();
 } elseif (isset($_POST['purge'])) {
     $instance->check((int) ($_POST['id'] ?? 0), PURGE, $_POST);
-    $instance->delete($_POST, 1);
+    $instance->delete($_POST, true);
     Session::addMessageAfterRedirect(__('JAMF instance deleted.', 'jamfsync'), true, INFO);
     Html::redirect('config.form.php');
 } else {
